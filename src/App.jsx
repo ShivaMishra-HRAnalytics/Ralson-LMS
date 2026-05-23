@@ -1787,16 +1787,14 @@ const openEditEmployee = (emp) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
 
-                const reader = new FileReader();
-                reader.onload = () => {
-                  const url = String(reader.result || "");
-                  setTrainingForm((prev) => ({
-                    ...prev,
-                    materialName: file.name,
-                    materialDataUrl: url,
-                  }));
-                };
-                reader.readAsDataURL(file);
+                setTrainingForm((prev) => ({
+  ...prev,
+  materialName: file.name,
+  materialLink: "",
+  materialDataUrl: "",
+}));
+
+alert("File name saved successfully.");
               }}
             />
 
