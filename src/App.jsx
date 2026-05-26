@@ -1,6 +1,14 @@
+import { createClient } from "@supabase/supabase-js";
 import { useEffect, useMemo, useState } from "react";
 
-const STORAGE_KEY = "ralson_lms_one_shot_v1";
+const ADMIN_EMAIL = "admin@company.com";
+const ADMIN_PASSWORD = "admin123";
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "";
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+const TABLE_NAME = "lms_state";
 
 const CATEGORIES = ["Onboarding", "Soft Skills", "Sales", "Technical", "HR Policies"];
 
@@ -135,7 +143,6 @@ const seedTrainings = [
     objectives: "Understand company culture and basic rules.",
     materialName: "Induction video",
     materialLink: "",
-    materialDataUrl: "",
     quizQuestions: QUIZ_BANK.Onboarding,
   },
   {
@@ -150,7 +157,6 @@ const seedTrainings = [
     objectives: "Learn attendance, leave, and conduct policies.",
     materialName: "HR policy PDF",
     materialLink: "",
-    materialDataUrl: "",
     quizQuestions: QUIZ_BANK["HR Policies"],
   },
   {
@@ -165,7 +171,6 @@ const seedTrainings = [
     objectives: "Improve product understanding and customer handling.",
     materialName: "Sales training video",
     materialLink: "",
-    materialDataUrl: "",
     quizQuestions: QUIZ_BANK.Sales,
   },
   {
@@ -180,7 +185,6 @@ const seedTrainings = [
     objectives: "Follow safety rules and standard procedures.",
     materialName: "Safety SOP PPT",
     materialLink: "",
-    materialDataUrl: "",
     quizQuestions: QUIZ_BANK.Technical,
   },
 ];
@@ -193,7 +197,8 @@ const seedAssignments = [
     status: "Completed",
     viewed: true,
     quizScore: 100,
-    completedAt: "2026-05-01",
+    completedAt: "2026-05-01T00:00:00.000Z",
+    lastViewed: "2026-05-01T00:00:00.000Z",
   },
   {
     id: 2,
@@ -203,6 +208,7 @@ const seedAssignments = [
     viewed: false,
     quizScore: null,
     completedAt: "",
+    lastViewed: "",
   },
 ];
 
@@ -226,7 +232,6 @@ const emptyTrainingForm = {
   objectives: "",
   materialName: "",
   materialLink: "",
-  materialDataUrl: "",
 };
 
 const emptyAssignForm = {
@@ -234,21 +239,9 @@ const emptyAssignForm = {
   trainingId: "",
 };
 
-const loadSaved = () => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-};
-
-const saved = loadSaved();
-
 const buildQuiz = (category) => {
-  const bank = QUIZ_BANK[category] || QUIZ_BANK.Onboarding;
-  return bank.slice(0, 3).map((q) => ({ ...q }));
+  const quiz = QUIZ_BANK[category] || QUIZ_BANK.Onboarding;
+  return quiz.map((item) => ({ ...item }));
 };
 
 const getMenuStyle = (active, current) => ({
@@ -256,23 +249,28 @@ const getMenuStyle = (active, current) => ({
   ...(active === current ? styles.menuBtnActive : {}),
 });
 
+const formatDate = (value) => {
+  if (!value) return "-";
+  try {
+    return new Date(value).toLocaleDateString();
+  } catch {
+    return value;
+  }
+};
+
 export default function App() {
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [storageStatus, setStorageStatus] = useState("");
   const [session, setSession] = useState(null);
-
-  const [employees, setEmployees] = useState(saved?.employees ?? seedEmployees);
-  const [trainings, setTrainings] = useState(saved?.trainings ?? seedTrainings);
-  const [assignments, setAssignments] = useState(saved?.assignments ?? seedAssignments);
-  const [quizResults, setQuizResults] = useState(saved?.quizResults ?? []);
-
   const [adminPage, setAdminPage] = useState("dashboard");
   const [employeePage, setEmployeePage] = useState("dashboard");
 
-  const [loginForm, setLoginForm] = useState({
-    role: "admin",
-    email: "",
-    password: "",
-  });
+  const [employees, setEmployees] = useState(seedEmployees);
+  const [trainings, setTrainings] = useState(seedTrainings);
+  const [assignments, setAssignments] = useState(seedAssignments);
+  const [quizResults, setQuizResults] = useState([]);
 
+  const [loginForm, setLoginForm] = useState({ role: "admin", email: "", password: "" });
   const [search, setSearch] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("All");
   const [categoryFilter, setCategoryFilter] = useState("All");
@@ -280,89 +278,149 @@ export default function App() {
   const [employeeForm, setEmployeeForm] = useState(emptyEmployeeForm);
   const [trainingForm, setTrainingForm] = useState(emptyTrainingForm);
   const [assignForm, setAssignForm] = useState(emptyAssignForm);
+  const [quizAnswers, setQuizAnswers] = useState([]);
 
   const [editEmployeeId, setEditEmployeeId] = useState(null);
   const [editTrainingId, setEditTrainingId] = useState(null);
   const [activeAssignmentId, setActiveAssignmentId] = useState(null);
-  const [quizAnswers, setQuizAnswers] = useState([]);
-  const [activeCertificate, setActiveCertificate] = useState(null);
-
   const [showEmployeeModal, setShowEmployeeModal] = useState(false);
   const [showTrainingModal, setShowTrainingModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [showViewerModal, setShowViewerModal] = useState(false);
   const [showQuizModal, setShowQuizModal] = useState(false);
   const [showCertificateModal, setShowCertificateModal] = useState(false);
+  const [activeCertificate, setActiveCertificate] = useState(null);
 
   useEffect(() => {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ employees, trainings, assignments, quizResults })
-    );
-  }, [employees, trainings, assignments, quizResults]);
+    let cancelled = false;
+
+    const loadCloudState = async () => {
+      if (!supabase) {
+        setStorageStatus("Supabase env is missing. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.");
+        setIsLoaded(true);
+        return;
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from(TABLE_NAME)
+          .select("*")
+          .eq("id", 1)
+          .maybeSingle();
+
+        if (error && error.code !== "PGRST116") {
+          throw error;
+        }
+
+        const safe = data || {
+          employees: seedEmployees,
+          trainings: seedTrainings,
+          assignments: seedAssignments,
+          quiz_results: [],
+        };
+
+        if (cancelled) return;
+
+        setEmployees(Array.isArray(safe.employees) ? safe.employees : seedEmployees);
+        setTrainings(Array.isArray(safe.trainings) ? safe.trainings : seedTrainings);
+        setAssignments(Array.isArray(safe.assignments) ? safe.assignments : seedAssignments);
+        setQuizResults(Array.isArray(safe.quiz_results) ? safe.quiz_results : []);
+        setStorageStatus("Connected to Supabase cloud storage.");
+
+        if (!data) {
+          await supabase.from(TABLE_NAME).upsert({
+            id: 1,
+            employees: seedEmployees,
+            trainings: seedTrainings,
+            assignments: seedAssignments,
+            quiz_results: [],
+            updated_at: new Date().toISOString(),
+          });
+        }
+      } catch (error) {
+        console.error(error);
+        if (!cancelled) {
+          setStorageStatus(`Storage load failed. Using local fallback. ${error?.message || ""}`);
+        }
+      } finally {
+        if (!cancelled) setIsLoaded(true);
+      }
+    };
+
+    loadCloudState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isLoaded || !supabase) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        const { error } = await supabase.from(TABLE_NAME).upsert({
+          id: 1,
+          employees,
+          trainings,
+          assignments,
+          quiz_results: quizResults,
+          updated_at: new Date().toISOString(),
+        });
+
+        if (error) throw error;
+        setStorageStatus("Data synced to Supabase.");
+      } catch (error) {
+        console.error(error);
+        setStorageStatus(`Sync failed: ${error?.message || "Unknown error"}`);
+      }
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [isLoaded, employees, trainings, assignments, quizResults]);
 
   const currentEmployee =
-    session?.role === "employee"
-      ? employees.find((e) => e.id === session.userId)
-      : null;
+    session?.role === "employee" ? employees.find((e) => e.id === session.userId) : null;
 
-  const myAssignments = currentEmployee
-    ? assignments.filter((a) => a.employeeId === currentEmployee.id)
-    : [];
-
-  const myQuizHistory = currentEmployee
-    ? quizResults.filter((q) => q.employeeId === currentEmployee.id)
-    : [];
+  const myAssignments = currentEmployee ? assignments.filter((a) => a.employeeId === currentEmployee.id) : [];
+  const myQuizHistory = currentEmployee ? quizResults.filter((q) => q.employeeId === currentEmployee.id) : [];
 
   const completedCount = assignments.filter((a) => a.status === "Completed").length;
   const pendingCount = assignments.filter((a) => a.status === "Pending").length;
   const viewedCount = assignments.filter((a) => a.status === "Viewed").length;
-  const completionRate = assignments.length
-    ? Math.round((completedCount / assignments.length) * 100)
-    : 0;
+  const completionRate = assignments.length ? Math.round((completedCount / assignments.length) * 100) : 0;
   const averageQuizScore = quizResults.length
-    ? Math.round(
-        quizResults.reduce((sum, item) => sum + item.score, 0) / quizResults.length
-      )
+    ? Math.round(quizResults.reduce((sum, item) => sum + item.score, 0) / quizResults.length)
     : 0;
 
   const filteredEmployees = useMemo(() => {
     const term = search.trim().toLowerCase();
     return employees.filter((e) => {
       const matchesSearch =
-        !term ||
-        [e.name, e.department, e.email, e.training, e.status]
-          .join(" ")
-          .toLowerCase()
-          .includes(term);
-
-      const matchesDepartment =
-        departmentFilter === "All" || e.department === departmentFilter;
-
+        !term || [e.name, e.department, e.email, e.training, e.status].join(" ").toLowerCase().includes(term);
+      const matchesDepartment = departmentFilter === "All" || e.department === departmentFilter;
       return matchesSearch && matchesDepartment;
     });
   }, [employees, search, departmentFilter]);
 
   const filteredTrainings = useMemo(() => {
     return trainings.filter((t) => {
-      const matchesCategory =
-        categoryFilter === "All" || t.category === categoryFilter;
-      const matchesDepartment =
-        departmentFilter === "All" || t.department === departmentFilter;
+      const matchesCategory = categoryFilter === "All" || t.category === categoryFilter;
+      const matchesDepartment = departmentFilter === "All" || t.department === departmentFilter;
       return matchesCategory && matchesDepartment;
     });
   }, [trainings, categoryFilter, departmentFilter]);
 
   const recentAssignments = [...assignments].slice(-5).reverse();
 
+  const resetLogin = () => setLoginForm({ role: "admin", email: "", password: "" });
+
   const handleLogin = () => {
     if (loginForm.role === "admin") {
-      if (
-        loginForm.email.trim().toLowerCase() === "admin@company.com" &&
-        loginForm.password === "admin123"
-      ) {
+      if (loginForm.email.trim().toLowerCase() === ADMIN_EMAIL && loginForm.password === ADMIN_PASSWORD) {
         setSession({ role: "admin", userId: null, name: "Admin" });
         setAdminPage("dashboard");
+        resetLogin();
       } else {
         alert("Admin login: admin@company.com / admin123");
       }
@@ -370,9 +428,7 @@ export default function App() {
     }
 
     const found = employees.find(
-      (e) =>
-        e.email.trim().toLowerCase() === loginForm.email.trim().toLowerCase() &&
-        e.password === loginForm.password
+      (e) => e.email.trim().toLowerCase() === loginForm.email.trim().toLowerCase() && e.password === loginForm.password
     );
 
     if (!found) {
@@ -382,116 +438,69 @@ export default function App() {
 
     setSession({ role: "employee", userId: found.id, name: found.name });
     setEmployeePage("dashboard");
+    resetLogin();
   };
 
   const handleLogout = () => {
     setSession(null);
     setAdminPage("dashboard");
     setEmployeePage("dashboard");
-    setLoginForm({ role: "admin", email: "", password: "" });
   };
 
-  const getTrainingByAssignment = (assignmentId) => {
-    const assignment = assignments.find((a) => a.id === assignmentId);
-    if (!assignment) return null;
-    return trainings.find((t) => t.id === assignment.trainingId) || null;
+  const openNewEmployee = () => {
+    setEmployeeForm(emptyEmployeeForm);
+    setEditEmployeeId(null);
+    setShowEmployeeModal(true);
   };
 
-  const openTrainingMaterial = (training) => {
+  const openEditEmployee = (emp) => {
+    if (!emp) return;
+    setEmployeeForm({
+      name: emp.name || "",
+      department: emp.department || "",
+      email: emp.email || "",
+      password: emp.password || "",
+      training: emp.training || "",
+      status: emp.status || "Pending",
+    });
+    setEditEmployeeId(emp.id);
+    setShowEmployeeModal(true);
+  };
+
+  const openNewTraining = () => {
+    setTrainingForm(emptyTrainingForm);
+    setEditTrainingId(null);
+    setShowTrainingModal(true);
+  };
+
+  const openEditTraining = (training) => {
     if (!training) return;
-
-    const file = training.materialDataUrl || training.materialLink;
-    if (!file) {
-      alert("Is training me koi file attached nahi hai.");
-      return;
-    }
-
-    window.open(file, "_blank", "noopener,noreferrer");
+    setTrainingForm({
+      title: training.title || "",
+      category: training.category || "Onboarding",
+      department: training.department || "",
+      duration: training.duration || "",
+      type: training.type || "Video",
+      mandatory: training.mandatory || "Yes",
+      description: training.description || "",
+      objectives: training.objectives || "",
+      materialName: training.materialName || "",
+      materialLink: training.materialLink || "",
+    });
+    setEditTrainingId(training.id);
+    setShowTrainingModal(true);
   };
 
-  const openAssignmentViewer = (assignmentId) => {
-    const assignment = assignments.find((a) => a.id === assignmentId);
-    const training = getTrainingByAssignment(assignmentId);
-    if (!assignment || !training) return;
-
-    setAssignments((prev) =>
-      prev.map((item) =>
-        item.id === assignmentId
-          ? {
-              ...item,
-              viewed: true,
-              status: item.status === "Pending" ? "Viewed" : item.status,
-            }
-          : item
-      )
-    );
-
-    setActiveAssignmentId(assignmentId);
-    setShowViewerModal(true);
-  };
-
-  const openQuizForAssignment = (assignmentId) => {
-    const assignment = assignments.find((a) => a.id === assignmentId);
-    const training = getTrainingByAssignment(assignmentId);
-    if (!assignment || !training) return;
-
-    setAssignments((prev) =>
-      prev.map((item) =>
-        item.id === assignmentId
-          ? {
-              ...item,
-              viewed: true,
-              status: item.status === "Pending" ? "Viewed" : item.status,
-            }
-          : item
-      )
-    );
-
-    setActiveAssignmentId(assignmentId);
-    setQuizAnswers(new Array((training.quizQuestions || []).length).fill(""));
-    setShowQuizModal(true);
-  };
-const openEditEmployee = (emp) => {
-  if (!emp) return;
-
-  setEmployeeForm({
-    name: emp.name || "",
-    department: emp.department || "",
-    email: emp.email || "",
-    password: emp.password || "",
-    training: emp.training || "",
-    status: emp.status || "Pending",
-  });
-
-  setEditEmployeeId(emp.id);
-  setShowEmployeeModal(true);
-};
   const saveEmployee = () => {
-    if (
-      !employeeForm.name ||
-      !employeeForm.department ||
-      !employeeForm.email ||
-      !employeeForm.password ||
-      !employeeForm.training
-    ) {
+    if (!employeeForm.name || !employeeForm.department || !employeeForm.email || !employeeForm.password || !employeeForm.training) {
       alert("Please fill all employee fields.");
       return;
     }
 
     if (editEmployeeId) {
-      setEmployees((prev) =>
-        prev.map((item) =>
-          item.id === editEmployeeId ? { ...item, ...employeeForm } : item
-        )
-      );
+      setEmployees((prev) => prev.map((item) => (item.id === editEmployeeId ? { ...item, ...employeeForm } : item)));
     } else {
-      setEmployees((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          ...employeeForm,
-        },
-      ]);
+      setEmployees((prev) => [...prev, { id: Date.now(), ...employeeForm }]);
     }
 
     setEmployeeForm(emptyEmployeeForm);
@@ -500,13 +509,7 @@ const openEditEmployee = (emp) => {
   };
 
   const saveTraining = () => {
-    if (
-      !trainingForm.title ||
-      !trainingForm.category ||
-      !trainingForm.department ||
-      !trainingForm.duration ||
-      !trainingForm.type
-    ) {
+    if (!trainingForm.title || !trainingForm.category || !trainingForm.department || !trainingForm.duration || !trainingForm.type) {
       alert("Please fill all training fields.");
       return;
     }
@@ -525,11 +528,7 @@ const openEditEmployee = (emp) => {
 
       if (oldTraining && oldTraining.title !== trainingForm.title) {
         setEmployees((prev) =>
-          prev.map((emp) =>
-            emp.training === oldTraining.title
-              ? { ...emp, training: trainingForm.title }
-              : emp
-          )
+          prev.map((emp) => (emp.training === oldTraining.title ? { ...emp, training: trainingForm.title } : emp))
         );
 
         setAssignments((prev) =>
@@ -541,14 +540,7 @@ const openEditEmployee = (emp) => {
         );
       }
     } else {
-      setTrainings((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          ...trainingForm,
-          quizQuestions,
-        },
-      ]);
+      setTrainings((prev) => [...prev, { id: Date.now(), ...trainingForm, quizQuestions }]);
     }
 
     setTrainingForm(emptyTrainingForm);
@@ -562,19 +554,11 @@ const openEditEmployee = (emp) => {
       return;
     }
 
-    const employee = employees.find(
-      (e) => String(e.id) === String(assignForm.employeeId)
-    );
-    const training = trainings.find(
-      (t) => String(t.id) === String(assignForm.trainingId)
-    );
-
+    const employee = employees.find((e) => String(e.id) === String(assignForm.employeeId));
+    const training = trainings.find((t) => String(t.id) === String(assignForm.trainingId));
     if (!employee || !training) return;
 
-    const duplicate = assignments.find(
-      (a) => a.employeeId === employee.id && a.trainingId === training.id
-    );
-
+    const duplicate = assignments.find((a) => a.employeeId === employee.id && a.trainingId === training.id);
     if (duplicate) {
       alert("This training is already assigned to this employee.");
       return;
@@ -590,14 +574,13 @@ const openEditEmployee = (emp) => {
         viewed: false,
         quizScore: null,
         completedAt: "",
+        lastViewed: "",
       },
     ]);
 
     setEmployees((prev) =>
       prev.map((item) =>
-        item.id === employee.id
-          ? { ...item, training: training.title, status: "Pending" }
-          : item
+        item.id === employee.id ? { ...item, training: training.title, status: "Pending" } : item
       )
     );
 
@@ -619,37 +602,67 @@ const openEditEmployee = (emp) => {
 
     if (training) {
       setEmployees((prev) =>
-        prev.map((item) =>
-          item.training === training.title
-            ? { ...item, training: "", status: "Pending" }
-            : item
-        )
+        prev.map((item) => (item.training === training.title ? { ...item, training: "", status: "Pending" } : item))
       );
     }
   };
 
-  const deleteAssignment = (id) => {
-    setAssignments((prev) => prev.filter((item) => item.id !== id));
-  };
+  const deleteAssignment = (id) => setAssignments((prev) => prev.filter((item) => item.id !== id));
 
   const markEmployeeCompleted = (id) => {
-    setEmployees((prev) =>
+    setEmployees((prev) => prev.map((item) => (item.id === id ? { ...item, status: "Completed" } : item)));
+  };
+
+  const openTrainingMaterial = (training) => {
+    if (!training) return;
+    if (!training.materialLink) {
+      alert("No public link is attached. Add a Google Drive / OneDrive / public link.");
+      return;
+    }
+    window.open(training.materialLink, "_blank", "noopener,noreferrer");
+  };
+
+  const openAssignmentViewer = (assignmentId) => {
+    const assignment = assignments.find((a) => a.id === assignmentId);
+    if (!assignment) return;
+
+    setAssignments((prev) =>
       prev.map((item) =>
-        item.id === id ? { ...item, status: "Completed" } : item
+        item.id === assignmentId
+          ? { ...item, viewed: true, status: item.status === "Pending" ? "Viewed" : item.status, lastViewed: new Date().toISOString() }
+          : item
       )
     );
+    setActiveAssignmentId(assignmentId);
+    setShowViewerModal(true);
+  };
+
+  const openQuizForAssignment = (assignmentId) => {
+    const assignment = assignments.find((a) => a.id === assignmentId);
+    if (!assignment) return;
+    const training = trainings.find((t) => t.id === assignment.trainingId);
+    if (!training) return;
+
+    setAssignments((prev) =>
+      prev.map((item) =>
+        item.id === assignmentId
+          ? { ...item, viewed: true, status: item.status === "Pending" ? "Viewed" : item.status, lastViewed: new Date().toISOString() }
+          : item
+      )
+    );
+    setActiveAssignmentId(assignmentId);
+    setQuizAnswers(new Array((training.quizQuestions || []).length).fill(""));
+    setShowQuizModal(true);
   };
 
   const submitQuiz = () => {
     const assignment = assignments.find((a) => a.id === activeAssignmentId);
     if (!assignment) return;
-
-    const training = getTrainingByAssignment(activeAssignmentId);
+    const training = trainings.find((t) => t.id === assignment.trainingId);
     if (!training) return;
 
     const questions = training.quizQuestions || [];
     let correct = 0;
-
     questions.forEach((q, index) => {
       if (Number(quizAnswers[index]) === q.answer) correct += 1;
     });
@@ -665,13 +678,12 @@ const openEditEmployee = (emp) => {
               quizScore: score,
               viewed: true,
               status: passed ? "Completed" : "Viewed",
-              completedAt: passed ? new Date().toLocaleDateString() : item.completedAt,
+              completedAt: passed ? new Date().toISOString() : item.completedAt,
+              lastViewed: new Date().toISOString(),
             }
           : item
       )
     );
-
-    const emp = employees.find((e) => e.id === assignment.employeeId);
 
     setQuizResults((prev) => [
       ...prev,
@@ -679,7 +691,7 @@ const openEditEmployee = (emp) => {
         id: Date.now(),
         employeeId: assignment.employeeId,
         trainingId: training.id,
-        employeeName: emp?.name || "",
+        employeeName: employees.find((e) => e.id === assignment.employeeId)?.name || "",
         trainingTitle: training.title,
         category: training.category,
         score,
@@ -688,17 +700,16 @@ const openEditEmployee = (emp) => {
       },
     ]);
 
+    const emp = employees.find((e) => e.id === assignment.employeeId);
     if (emp) {
       setEmployees((prev) =>
-        prev.map((item) =>
-          item.id === emp.id ? { ...item, status: passed ? "Completed" : "Viewed" } : item
-        )
+        prev.map((item) => (item.id === emp.id ? { ...item, status: passed ? "Completed" : "Viewed" } : item))
       );
     }
 
     if (passed) {
       setActiveCertificate({
-        employeeName: emp?.name || "",
+        employeeName: employees.find((e) => e.id === assignment.employeeId)?.name || "",
         trainingTitle: training.title,
         date: new Date().toLocaleDateString(),
         score,
@@ -710,41 +721,30 @@ const openEditEmployee = (emp) => {
     setQuizAnswers([]);
   };
 
-  const printCertificate = () => {
-    if (!activeCertificate) return;
+  const markCompleted = (assignmentId) => {
+    const assignment = assignments.find((item) => item.id === assignmentId);
+    if (!assignment) return;
 
-    const win = window.open("", "_blank");
-    if (!win) return;
+    setAssignments((prev) =>
+      prev.map((item) =>
+        item.id === assignmentId
+          ? { ...item, status: "Completed", viewed: true, completedAt: new Date().toISOString() }
+          : item
+      )
+    );
 
-    win.document.write(`
-      <html>
-        <head>
-          <title>Certificate</title>
-          <style>
-            body { font-family: Arial, sans-serif; padding: 40px; text-align: center; }
-            .box { border: 8px solid #0f172a; padding: 40px; border-radius: 20px; }
-            h1 { color: #0f172a; margin-bottom: 10px; }
-            .name { font-size: 32px; font-weight: bold; margin: 20px 0; }
-            .meta { color: #475569; margin-top: 10px; }
-          </style>
-        </head>
-        <body>
-          <div class="box">
-            <h1>Certificate of Completion</h1>
-            <p>This certifies that</p>
-            <div class="name">${activeCertificate.employeeName}</div>
-            <p>has successfully completed</p>
-            <div class="name">${activeCertificate.trainingTitle}</div>
-            <p class="meta">Completion Date: ${activeCertificate.date}</p>
-            <p class="meta">Quiz Score: ${activeCertificate.score}%</p>
-          </div>
-        </body>
-      </html>
-    `);
-    win.document.close();
-    win.focus();
-    win.print();
+    const emp = employees.find((e) => e.id === assignment.employeeId);
+    if (emp) {
+      setEmployees((prev) => prev.map((item) => (item.id === emp.id ? { ...item, status: "Completed" } : item)));
+    }
   };
+
+  const selectedAssignment = assignments.find((item) => item.id === activeAssignmentId);
+  const selectedTraining = selectedAssignment ? trainings.find((t) => t.id === selectedAssignment.trainingId) : null;
+
+  if (!isLoaded) {
+    return <div style={styles.loading}>Loading LMS...</div>;
+  }
 
   if (!session) {
     return (
@@ -754,8 +754,8 @@ const openEditEmployee = (emp) => {
             <h1 style={styles.loginBrand}>Ralson LMS</h1>
             <h2 style={styles.loginTitle}>Corporate Training Portal</h2>
             <p style={styles.loginText}>
-              Login as Admin or Employee. Admin manages trainings, employees, uploads and assignments.
-              Employee can only see assigned content, complete quiz, and track progress.
+              Login as Admin or Employee. Admin manages trainings, employees, assignments, reports and uploads.
+              Employee can see only assigned trainings, open content, take quiz, and track progress.
             </p>
             <p style={styles.loginPoint}>• Admin dashboard</p>
             <p style={styles.loginPoint}>• Employee portal</p>
@@ -769,9 +769,7 @@ const openEditEmployee = (emp) => {
             <select
               style={styles.input}
               value={loginForm.role}
-              onChange={(e) =>
-                setLoginForm((prev) => ({ ...prev, role: e.target.value }))
-              }
+              onChange={(e) => setLoginForm((prev) => ({ ...prev, role: e.target.value }))}
             >
               <option value="admin">Admin</option>
               <option value="employee">Employee</option>
@@ -782,9 +780,7 @@ const openEditEmployee = (emp) => {
               style={styles.input}
               type="email"
               value={loginForm.email}
-              onChange={(e) =>
-                setLoginForm((prev) => ({ ...prev, email: e.target.value }))
-              }
+              onChange={(e) => setLoginForm((prev) => ({ ...prev, email: e.target.value }))}
               placeholder="Enter email"
             />
 
@@ -793,9 +789,7 @@ const openEditEmployee = (emp) => {
               style={styles.input}
               type="password"
               value={loginForm.password}
-              onChange={(e) =>
-                setLoginForm((prev) => ({ ...prev, password: e.target.value }))
-              }
+              onChange={(e) => setLoginForm((prev) => ({ ...prev, password: e.target.value }))}
               placeholder="Enter password"
             />
 
@@ -831,37 +825,18 @@ const openEditEmployee = (emp) => {
           <div>
             <h2 style={styles.logo}>Ralson LMS</h2>
             <p style={styles.sublogo}>Employee Portal</p>
-
             <div style={styles.menu}>
-              <button
-                style={getMenuStyle(employeePage, "dashboard")}
-                onClick={() => setEmployeePage("dashboard")}
-              >
-                Dashboard
-              </button>
-              <button
-                style={getMenuStyle(employeePage, "learning")}
-                onClick={() => setEmployeePage("learning")}
-              >
-                My Trainings
-              </button>
-              <button
-                style={getMenuStyle(employeePage, "history")}
-                onClick={() => setEmployeePage("history")}
-              >
-                Quiz History
-              </button>
+              <button style={getMenuStyle(employeePage, "dashboard")} onClick={() => setEmployeePage("dashboard")}>Dashboard</button>
+              <button style={getMenuStyle(employeePage, "learning")} onClick={() => setEmployeePage("learning")}>My Trainings</button>
+              <button style={getMenuStyle(employeePage, "history")} onClick={() => setEmployeePage("history")}>Quiz History</button>
             </div>
           </div>
-
           <div>
             <div style={styles.profileCard}>
               <strong>{currentEmployee.name}</strong>
               <p style={styles.smallText}>{currentEmployee.department}</p>
             </div>
-            <button style={styles.logoutBtn} onClick={handleLogout}>
-              Logout
-            </button>
+            <button style={styles.logoutBtn} onClick={handleLogout}>Logout</button>
           </div>
         </aside>
 
@@ -881,43 +856,15 @@ const openEditEmployee = (emp) => {
                 <div style={styles.statusBox}>
                   <div style={styles.statusLabel}>Assigned Trainings</div>
                   <div style={styles.statusNumber}>{myAssignments.length}</div>
-                  <div style={styles.statusSub}>
-                    Completed: {myAssignments.filter((a) => a.status === "Completed").length}
-                  </div>
+                  <div style={styles.statusSub}>Completed: {myAssignments.filter((a) => a.status === "Completed").length}</div>
                 </div>
               </section>
 
               <div style={styles.statsGrid}>
-                <div style={styles.card}>
-                  <h2 style={styles.statNumber}>
-                    {myAssignments.filter((a) => a.status === "Completed").length}
-                  </h2>
-                  <p>Completed</p>
-                </div>
-                <div style={styles.card}>
-                  <h2 style={styles.statNumber}>
-                    {myAssignments.filter((a) => a.status === "Viewed").length}
-                  </h2>
-                  <p>Viewed</p>
-                </div>
-                <div style={styles.card}>
-                  <h2 style={styles.statNumber}>
-                    {myAssignments.filter((a) => a.status === "Pending").length}
-                  </h2>
-                  <p>Pending</p>
-                </div>
-                <div style={styles.card}>
-                  <h2 style={styles.statNumber}>
-                    {myQuizHistory.length
-                      ? Math.round(
-                          myQuizHistory.reduce((s, item) => s + item.score, 0) /
-                            myQuizHistory.length
-                        )
-                      : 0}
-                    %
-                  </h2>
-                  <p>Avg Quiz Score</p>
-                </div>
+                <div style={styles.statCard}><h2 style={styles.statNumber}>{myAssignments.filter((a) => a.status === "Completed").length}</h2><p>Completed</p></div>
+                <div style={styles.statCard}><h2 style={styles.statNumber}>{myAssignments.filter((a) => a.status === "Viewed").length}</h2><p>Viewed</p></div>
+                <div style={styles.statCard}><h2 style={styles.statNumber}>{myAssignments.filter((a) => a.status === "Pending").length}</h2><p>Pending</p></div>
+                <div style={styles.statCard}><h2 style={styles.statNumber}>{myQuizHistory.length ? Math.round(myQuizHistory.reduce((s, item) => s + item.score, 0) / myQuizHistory.length) : 0}%</h2><p>Avg Quiz Score</p></div>
               </div>
 
               <section style={styles.panel}>
@@ -925,7 +872,6 @@ const openEditEmployee = (emp) => {
                   <h2 style={styles.sectionTitle}>Assigned Trainings</h2>
                   <span style={styles.tag}>Only your content</span>
                 </div>
-
                 {myAssignments.length === 0 ? (
                   <p style={styles.emptyText}>No training assigned yet.</p>
                 ) : (
@@ -934,46 +880,14 @@ const openEditEmployee = (emp) => {
                     return (
                       <div key={assignment.id} style={styles.listCard}>
                         <div>
-                          <div style={styles.itemTitle}>
-                            {training ? training.title : "Training removed"}
-                          </div>
-                          <div style={styles.smallText}>
-                            Category: {training?.category || "-"} • Type: {training?.type || "-"} •
-                            Status: {assignment.status}
-                          </div>
-                          <div style={styles.smallText}>
-                            Quiz Score: {assignment.quizScore ?? "NA"}
-                          </div>
+                          <div style={styles.itemTitle}>{training ? training.title : "Training removed"}</div>
+                          <div style={styles.smallText}>Category: {training?.category || "-"} • Type: {training?.type || "-"} • Status: {assignment.status}</div>
+                          <div style={styles.smallText}>Quiz Score: {assignment.quizScore ?? "NA"}</div>
                         </div>
-
                         <div style={styles.listActions}>
-                          <button
-                            style={styles.primaryBtnSmall}
-                            onClick={() => openAssignmentViewer(assignment.id)}
-                          >
-                            View
-                          </button>
-                          <button
-                            style={styles.secondarySmallBtn}
-                            onClick={() => openQuizForAssignment(assignment.id)}
-                          >
-                            Quiz
-                          </button>
-                          <button
-                            style={styles.markBtn}
-                            onClick={() => {
-                              markEmployeeCompleted(currentEmployee.id);
-                              setAssignments((prev) =>
-                                prev.map((a) =>
-                                  a.id === assignment.id
-                                    ? { ...a, status: "Completed", viewed: true }
-                                    : a
-                                )
-                              );
-                            }}
-                          >
-                            Complete
-                          </button>
+                          <button style={styles.primaryBtnSmall} onClick={() => openAssignmentViewer(assignment.id)}>View</button>
+                          <button style={styles.secondarySmallBtn} onClick={() => openQuizForAssignment(assignment.id)}>Quiz</button>
+                          <button style={styles.markBtn} onClick={() => markCompleted(assignment.id)}>Complete</button>
                         </div>
                       </div>
                     );
@@ -989,7 +903,6 @@ const openEditEmployee = (emp) => {
                 <h2 style={styles.sectionTitle}>My Trainings</h2>
                 <span style={styles.tag}>Assigned modules</span>
               </div>
-
               {myAssignments.length === 0 ? (
                 <p style={styles.emptyText}>No training assigned yet.</p>
               ) : (
@@ -998,29 +911,13 @@ const openEditEmployee = (emp) => {
                   return (
                     <div key={assignment.id} style={styles.listCard}>
                       <div>
-                        <div style={styles.itemTitle}>
-                          {training ? training.title : "Training removed"}
-                        </div>
-                        <div style={styles.smallText}>
-                          {training?.category || "-"} • {training?.department || "-"} • {training?.duration || "-"}
-                        </div>
-                        <div style={styles.smallText}>
-                          Status: {assignment.status} • Quiz: {assignment.quizScore ?? "NA"}
-                        </div>
+                        <div style={styles.itemTitle}>{training ? training.title : "Training removed"}</div>
+                        <div style={styles.smallText}>{training?.category || "-"} • {training?.department || "-"} • {training?.duration || "-"}</div>
+                        <div style={styles.smallText}>Status: {assignment.status} • Quiz: {assignment.quizScore ?? "NA"}</div>
                       </div>
                       <div style={styles.listActions}>
-                        <button
-                          style={styles.primaryBtnSmall}
-                          onClick={() => openAssignmentViewer(assignment.id)}
-                        >
-                          Open
-                        </button>
-                        <button
-                          style={styles.secondarySmallBtn}
-                          onClick={() => openQuizForAssignment(assignment.id)}
-                        >
-                          Take Quiz
-                        </button>
+                        <button style={styles.primaryBtnSmall} onClick={() => openAssignmentViewer(assignment.id)}>Open</button>
+                        <button style={styles.secondarySmallBtn} onClick={() => openQuizForAssignment(assignment.id)}>Take Quiz</button>
                       </div>
                     </div>
                   );
@@ -1035,17 +932,13 @@ const openEditEmployee = (emp) => {
                 <h2 style={styles.sectionTitle}>Quiz History</h2>
                 <span style={styles.tag}>Saved results</span>
               </div>
-
               {myQuizHistory.length === 0 ? (
                 <p style={styles.emptyText}>No quiz submitted yet.</p>
               ) : (
                 myQuizHistory.map((item) => (
                   <div key={item.id} style={styles.assignmentCard}>
                     <strong>{item.trainingTitle}</strong>
-                    <p style={styles.smallText}>
-                      Category: {item.category} • Score: {item.score}% •{" "}
-                      {item.passed ? "Passed" : "Needs improvement"} • {item.date}
-                    </p>
+                    <p style={styles.smallText}>Category: {item.category} • Score: {item.score}% • {item.passed ? "Passed" : "Needs improvement"} • {item.date}</p>
                     {item.passed && (
                       <button
                         style={styles.primaryBtnSmall}
@@ -1073,69 +966,23 @@ const openEditEmployee = (emp) => {
           <div style={styles.modalOverlay}>
             <div style={styles.modalLarge}>
               <h2 style={styles.modalTitle}>{selectedTraining.title}</h2>
-              <p style={styles.smallText}>
-                Category: {selectedTraining.category} • Type: {selectedTraining.type} • Duration: {selectedTraining.duration}
-              </p>
-
+              <p style={styles.smallText}>Category: {selectedTraining.category} • Type: {selectedTraining.type} • Duration: {selectedTraining.duration}</p>
               <div style={styles.contentBox}>
                 <p><strong>Description:</strong> {selectedTraining.description || "-"}</p>
                 <p><strong>Objectives:</strong> {selectedTraining.objectives || "-"}</p>
                 <p><strong>Uploaded Material:</strong> {selectedTraining.materialName || "-"}</p>
                 <p><strong>Mandatory:</strong> {selectedTraining.mandatory}</p>
-
                 <div style={styles.listActions}>
-                  <button
-                    style={styles.primaryBtnSmall}
-                    onClick={() => openTrainingMaterial(selectedTraining)}
-                  >
-                    Open File
-                  </button>
-
+                  <button style={styles.primaryBtnSmall} onClick={() => openTrainingMaterial(selectedTraining)}>Open Link</button>
                   {selectedTraining.materialLink ? (
-                    <a
-                      href={selectedTraining.materialLink}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={styles.linkBtn}
-                    >
-                      Open Link
-                    </a>
+                    <a href={selectedTraining.materialLink} target="_blank" rel="noreferrer" style={styles.linkBtn}>Open in New Tab</a>
                   ) : null}
                 </div>
               </div>
-
               <div style={styles.modalActions}>
-                <button
-                  style={styles.secondaryBtn}
-                  onClick={() => setShowViewerModal(false)}
-                >
-                  Close
-                </button>
-                <button
-                  style={styles.primaryBtnSmall}
-                  onClick={() => {
-                    markEmployeeCompleted(selectedEmployee?.id);
-                    setAssignments((prev) =>
-                      prev.map((a) =>
-                        a.id === selectedAssignment.id
-                          ? { ...a, status: "Completed", viewed: true }
-                          : a
-                      )
-                    );
-                    setShowViewerModal(false);
-                  }}
-                >
-                  Mark Complete
-                </button>
-                <button
-                  style={styles.markBtn}
-                  onClick={() => {
-                    setShowViewerModal(false);
-                    openQuizForAssignment(selectedAssignment.id);
-                  }}
-                >
-                  Take Quiz
-                </button>
+                <button style={styles.secondaryBtn} onClick={() => setShowViewerModal(false)}>Close</button>
+                <button style={styles.primaryBtnSmall} onClick={() => { markCompleted(selectedAssignment.id); setShowViewerModal(false); }}>Mark Complete</button>
+                <button style={styles.markBtn} onClick={() => { setShowViewerModal(false); openQuizForAssignment(selectedAssignment.id); }}>Take Quiz</button>
               </div>
             </div>
           </div>
@@ -1145,13 +992,10 @@ const openEditEmployee = (emp) => {
           <div style={styles.modalOverlay}>
             <div style={styles.modalLarge}>
               <h2 style={styles.modalTitle}>Quiz: {selectedTraining.title}</h2>
-              <p style={styles.smallText}>Answer 3 questions and submit your score.</p>
-
+              <p style={styles.smallText}>Answer all questions and submit your score.</p>
               {(selectedTraining.quizQuestions || []).map((q, index) => (
                 <div key={index} style={styles.quizCard}>
-                  <p style={styles.quizQuestion}>
-                    {index + 1}. {q.question}
-                  </p>
+                  <p style={styles.quizQuestion}>{index + 1}. {q.question}</p>
                   {q.options.map((option, optIndex) => (
                     <label key={optIndex} style={styles.radioRow}>
                       <input
@@ -1170,17 +1014,9 @@ const openEditEmployee = (emp) => {
                   ))}
                 </div>
               ))}
-
               <div style={styles.modalActions}>
-                <button
-                  style={styles.secondaryBtn}
-                  onClick={() => setShowQuizModal(false)}
-                >
-                  Cancel
-                </button>
-                <button style={styles.primaryBtnSmall} onClick={submitQuiz}>
-                  Submit Quiz
-                </button>
+                <button style={styles.secondaryBtn} onClick={() => setShowQuizModal(false)}>Cancel</button>
+                <button style={styles.primaryBtnSmall} onClick={submitQuiz}>Submit Quiz</button>
               </div>
             </div>
           </div>
@@ -1199,17 +1035,9 @@ const openEditEmployee = (emp) => {
                 <p style={styles.smallText}>Completion Date: {activeCertificate.date}</p>
                 <p style={styles.smallText}>Quiz Score: {activeCertificate.score}%</p>
               </div>
-
               <div style={styles.modalActions}>
-                <button
-                  style={styles.secondaryBtn}
-                  onClick={() => setShowCertificateModal(false)}
-                >
-                  Close
-                </button>
-                <button style={styles.primaryBtnSmall} onClick={printCertificate}>
-                  Print Certificate
-                </button>
+                <button style={styles.secondaryBtn} onClick={() => setShowCertificateModal(false)}>Close</button>
+                <button style={styles.primaryBtnSmall} onClick={() => window.print()}>Print Certificate</button>
               </div>
             </div>
           </div>
@@ -1224,58 +1052,25 @@ const openEditEmployee = (emp) => {
         <div>
           <h2 style={styles.logo}>Ralson LMS</h2>
           <p style={styles.sublogo}>Learning & Development Portal</p>
-
           <div style={styles.menu}>
-            <button
-              style={getMenuStyle(adminPage, "dashboard")}
-              onClick={() => setAdminPage("dashboard")}
-            >
-              Dashboard
-            </button>
-            <button
-              style={getMenuStyle(adminPage, "employees")}
-              onClick={() => setAdminPage("employees")}
-            >
-              Employees
-            </button>
-            <button
-              style={getMenuStyle(adminPage, "training")}
-              onClick={() => setAdminPage("training")}
-            >
-              Training Modules
-            </button>
-            <button
-              style={getMenuStyle(adminPage, "assign")}
-              onClick={() => setAdminPage("assign")}
-            >
-              Assign Training
-            </button>
-            <button
-              style={getMenuStyle(adminPage, "reports")}
-              onClick={() => setAdminPage("reports")}
-            >
-              Reports
-            </button>
+            <button style={getMenuStyle(adminPage, "dashboard")} onClick={() => setAdminPage("dashboard")}>Dashboard</button>
+            <button style={getMenuStyle(adminPage, "employees")} onClick={() => setAdminPage("employees")}>Employees</button>
+            <button style={getMenuStyle(adminPage, "training")} onClick={() => setAdminPage("training")}>Training Modules</button>
+            <button style={getMenuStyle(adminPage, "assign")} onClick={() => setAdminPage("assign")}>Assign Training</button>
+            <button style={getMenuStyle(adminPage, "reports")} onClick={() => setAdminPage("reports")}>Reports</button>
           </div>
         </div>
-
         <div>
-          <button style={styles.primaryBtn} onClick={() => setShowEmployeeModal(true)}>
-            Add Employee
-          </button>
-          <button style={styles.darkBtn} onClick={() => setShowTrainingModal(true)}>
-            Add Training
-          </button>
-          <button style={styles.darkBtn} onClick={() => setShowAssignModal(true)}>
-            Assign Module
-          </button>
-          <button style={styles.logoutBtn} onClick={handleLogout}>
-            Logout
-          </button>
+          <button style={styles.primaryBtn} onClick={openNewEmployee}>Add Employee</button>
+          <button style={styles.darkBtn} onClick={openNewTraining}>Add Training</button>
+          <button style={styles.darkBtn} onClick={() => setShowAssignModal(true)}>Assign Module</button>
+          <button style={styles.logoutBtn} onClick={handleLogout}>Logout</button>
         </div>
       </aside>
 
       <main style={styles.content}>
+        <div style={styles.banner}>{storageStatus || ""}</div>
+
         <div style={styles.headerRow}>
           <div>
             <p style={styles.smallTitle}>Corporate Training Dashboard</p>
@@ -1283,29 +1078,16 @@ const openEditEmployee = (emp) => {
           </div>
 
           <div style={styles.filterRow}>
-            <select
-              style={styles.filterInput}
-              value={departmentFilter}
-              onChange={(e) => setDepartmentFilter(e.target.value)}
-            >
+            <select style={styles.filterInput} value={departmentFilter} onChange={(e) => setDepartmentFilter(e.target.value)}>
               <option value="All">All Departments</option>
               {[...new Set(employees.map((e) => e.department))].map((dep) => (
-                <option key={dep} value={dep}>
-                  {dep}
-                </option>
+                <option key={dep} value={dep}>{dep}</option>
               ))}
             </select>
-
-            <select
-              style={styles.filterInput}
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-            >
+            <select style={styles.filterInput} value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
               <option value="All">All Categories</option>
               {CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
+                <option key={cat} value={cat}>{cat}</option>
               ))}
             </select>
           </div>
@@ -1328,22 +1110,10 @@ const openEditEmployee = (emp) => {
             </section>
 
             <div style={styles.statsGrid}>
-              <div style={styles.card}>
-                <h2 style={styles.statNumber}>{employees.length}</h2>
-                <p>Total Employees</p>
-              </div>
-              <div style={styles.card}>
-                <h2 style={styles.statNumber}>{trainings.length}</h2>
-                <p>Total Trainings</p>
-              </div>
-              <div style={styles.card}>
-                <h2 style={styles.statNumber}>{completedCount}</h2>
-                <p>Completed</p>
-              </div>
-              <div style={styles.card}>
-                <h2 style={styles.statNumber}>{completionRate}%</h2>
-                <p>Completion Rate</p>
-              </div>
+              <div style={styles.statCard}><h2 style={styles.statNumber}>{employees.length}</h2><p>Total Employees</p></div>
+              <div style={styles.statCard}><h2 style={styles.statNumber}>{trainings.length}</h2><p>Total Trainings</p></div>
+              <div style={styles.statCard}><h2 style={styles.statNumber}>{completedCount}</h2><p>Completed</p></div>
+              <div style={styles.statCard}><h2 style={styles.statNumber}>{completionRate}%</h2><p>Completion Rate</p></div>
             </div>
 
             <div style={styles.grid2}>
@@ -1352,29 +1122,18 @@ const openEditEmployee = (emp) => {
                   <h2 style={styles.sectionTitle}>Training Modules</h2>
                   <span style={styles.tag}>{filteredTrainings.length} visible</span>
                 </div>
-
                 {filteredTrainings.map((item) => (
                   <div key={item.id} style={styles.listCard}>
                     <div>
                       <div style={styles.itemTitle}>{item.title}</div>
-                      <div style={styles.smallText}>
-                        Category: {item.category} • Department: {item.department}
-                      </div>
-                      <div style={styles.smallText}>
-                        Duration: {item.duration} • Type: {item.type} • Mandatory: {item.mandatory}
-                      </div>
+                      <div style={styles.smallText}>Category: {item.category} • Department: {item.department}</div>
+                      <div style={styles.smallText}>Duration: {item.duration} • Type: {item.type} • Mandatory: {item.mandatory}</div>
                       <div style={styles.smallText}>Material: {item.materialName || "-"}</div>
                     </div>
                     <div style={styles.listActions}>
-                      <button style={styles.primaryBtnSmall} onClick={() => openTrainingMaterial(item)}>
-                        View
-                      </button>
-                      <button style={styles.editBtn} onClick={() => openEditTraining(item)}>
-                        Edit
-                      </button>
-                      <button style={styles.deleteBtn} onClick={() => deleteTraining(item.id)}>
-                        Delete
-                      </button>
+                      <button style={styles.primaryBtnSmall} onClick={() => openTrainingMaterial(item)}>View</button>
+                      <button style={styles.editBtn} onClick={() => openEditTraining(item)}>Edit</button>
+                      <button style={styles.deleteBtn} onClick={() => deleteTraining(item.id)}>Delete</button>
                     </div>
                   </div>
                 ))}
@@ -1385,7 +1144,6 @@ const openEditEmployee = (emp) => {
                   <h2 style={styles.sectionTitle}>Recent Assignments</h2>
                   <span style={styles.tag}>Live tracking</span>
                 </div>
-
                 {recentAssignments.length === 0 ? (
                   <p style={styles.emptyText}>No assignments yet.</p>
                 ) : (
@@ -1395,23 +1153,10 @@ const openEditEmployee = (emp) => {
                     return (
                       <div key={item.id} style={styles.assignmentCard}>
                         <strong>{emp?.name || "Employee removed"}</strong>
-                        <p style={styles.smallText}>
-                          {training?.title || "Training removed"} • {training?.category || "-"} •{" "}
-                          {item.status} • Score: {item.quizScore ?? "NA"}
-                        </p>
+                        <p style={styles.smallText}>{training?.title || "Training removed"} • {training?.category || "-"} • {item.status} • Score: {item.quizScore ?? "NA"}</p>
                         <div style={styles.listActions}>
-                          <button
-                            style={styles.primaryBtnSmall}
-                            onClick={() => openTrainingMaterial(training)}
-                          >
-                            View
-                          </button>
-                          <button
-                            style={styles.deleteBtn}
-                            onClick={() => deleteAssignment(item.id)}
-                          >
-                            Delete Assignment
-                          </button>
+                          <button style={styles.primaryBtnSmall} onClick={() => openTrainingMaterial(training)}>View</button>
+                          <button style={styles.deleteBtn} onClick={() => deleteAssignment(item.id)}>Delete Assignment</button>
                         </div>
                       </div>
                     );
@@ -1423,70 +1168,42 @@ const openEditEmployee = (emp) => {
         )}
 
         {adminPage === "employees" && (
-          <section style={styles.panel}>
+          <section style={{ ...styles.panel, width: "100%" }}>
             <div style={styles.panelHeader}>
               <h2 style={styles.sectionTitle}>Employee Training Status</h2>
-              <input
-                style={styles.searchInput}
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search employee..."
-              />
+              <input style={styles.searchInput} type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search employee..." />
             </div>
 
-            <table style={styles.table}>
-              <thead>
-                <tr>
-                  <th style={styles.th}>Employee</th>
-                  <th style={styles.th}>Department</th>
-                  <th style={styles.th}>Email</th>
-                  <th style={styles.th}>Training</th>
-                  <th style={styles.th}>Status</th>
-                  <th style={styles.th}>Edit</th>
-                  <th style={styles.th}>Delete</th>
-                  <th style={styles.th}>Toggle</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredEmployees.map((emp) => (
-                  <tr key={emp.id}>
-                    <td style={styles.td}>{emp.name}</td>
-                    <td style={styles.td}>{emp.department}</td>
-                    <td style={styles.td}>{emp.email || "-"}</td>
-                    <td style={styles.td}>{emp.training}</td>
-                    <td
-                      style={{
-                        ...styles.td,
-                        color:
-                          emp.status === "Completed"
-                            ? "green"
-                            : emp.status === "Viewed"
-                            ? "#b45309"
-                            : "#64748b",
-                      }}
-                    >
-                      {emp.status}
-                    </td>
-                    <td style={styles.td}>
-                      <button style={styles.editBtn} onClick={() => openEditEmployee(emp)}>
-                        Edit
-                      </button>
-                    </td>
-                    <td style={styles.td}>
-                      <button style={styles.deleteBtn} onClick={() => deleteEmployee(emp.id)}>
-                        Delete
-                      </button>
-                    </td>
-                    <td style={styles.td}>
-                      <button style={styles.secondarySmallBtn} onClick={() => markEmployeeCompleted(emp.id)}>
-                        Mark Complete
-                      </button>
-                    </td>
+            <div style={styles.tableWrap}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>Employee</th>
+                    <th style={styles.th}>Department</th>
+                    <th style={styles.th}>Email</th>
+                    <th style={styles.th}>Training</th>
+                    <th style={styles.th}>Status</th>
+                    <th style={styles.th}>Edit</th>
+                    <th style={styles.th}>Delete</th>
+                    <th style={styles.th}>Toggle</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {filteredEmployees.map((emp) => (
+                    <tr key={emp.id}>
+                      <td style={styles.td}>{emp.name}</td>
+                      <td style={styles.td}>{emp.department}</td>
+                      <td style={styles.td}>{emp.email || "-"}</td>
+                      <td style={styles.td}>{emp.training}</td>
+                      <td style={{ ...styles.td, color: emp.status === "Completed" ? "green" : emp.status === "Viewed" ? "#b45309" : "#64748b" }}>{emp.status}</td>
+                      <td style={styles.td}><button style={styles.editBtn} onClick={() => openEditEmployee(emp)}>Edit</button></td>
+                      <td style={styles.td}><button style={styles.deleteBtn} onClick={() => deleteEmployee(emp.id)}>Delete</button></td>
+                      <td style={styles.td}><button style={styles.secondarySmallBtn} onClick={() => markEmployeeCompleted(emp.id)}>Mark Complete</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </section>
         )}
 
@@ -1494,33 +1211,21 @@ const openEditEmployee = (emp) => {
           <section style={styles.panel}>
             <div style={styles.panelHeader}>
               <h2 style={styles.sectionTitle}>Training Library</h2>
-              <button style={styles.primaryBtnSmall} onClick={() => setShowTrainingModal(true)}>
-                Add Training
-              </button>
+              <button style={styles.primaryBtnSmall} onClick={openNewTraining}>Add Training</button>
             </div>
 
             {filteredTrainings.map((item) => (
               <div key={item.id} style={styles.listCard}>
                 <div>
                   <div style={styles.itemTitle}>{item.title}</div>
-                  <div style={styles.smallText}>
-                    Category: {item.category} • Department: {item.department}
-                  </div>
-                  <div style={styles.smallText}>
-                    Duration: {item.duration} • Type: {item.type} • Mandatory: {item.mandatory}
-                  </div>
+                  <div style={styles.smallText}>Category: {item.category} • Department: {item.department}</div>
+                  <div style={styles.smallText}>Duration: {item.duration} • Type: {item.type} • Mandatory: {item.mandatory}</div>
                   <div style={styles.smallText}>Material: {item.materialName || "-"}</div>
                 </div>
                 <div style={styles.listActions}>
-                  <button style={styles.primaryBtnSmall} onClick={() => openTrainingMaterial(item)}>
-                    View
-                  </button>
-                  <button style={styles.editBtn} onClick={() => openEditTraining(item)}>
-                    Edit
-                  </button>
-                  <button style={styles.deleteBtn} onClick={() => deleteTraining(item.id)}>
-                    Delete
-                  </button>
+                  <button style={styles.primaryBtnSmall} onClick={() => openTrainingMaterial(item)}>View</button>
+                  <button style={styles.editBtn} onClick={() => openEditTraining(item)}>Edit</button>
+                  <button style={styles.deleteBtn} onClick={() => deleteTraining(item.id)}>Delete</button>
                 </div>
               </div>
             ))}
@@ -1531,14 +1236,9 @@ const openEditEmployee = (emp) => {
           <section style={styles.panel}>
             <div style={styles.panelHeader}>
               <h2 style={styles.sectionTitle}>Assign Training</h2>
-              <button style={styles.primaryBtnSmall} onClick={() => setShowAssignModal(true)}>
-                New Assignment
-              </button>
+              <button style={styles.primaryBtnSmall} onClick={() => setShowAssignModal(true)}>New Assignment</button>
             </div>
-
-            <p style={styles.heroText}>
-              Assign an existing training module to an employee and track viewed, completed, and quiz score.
-            </p>
+            <p style={styles.heroText}>Assign an existing training module to an employee and track viewed, completed, and quiz score.</p>
 
             {assignments.map((item) => {
               const emp = employees.find((e) => e.id === item.employeeId);
@@ -1546,20 +1246,11 @@ const openEditEmployee = (emp) => {
               return (
                 <div key={item.id} style={styles.assignmentCard}>
                   <strong>{emp?.name || "Employee removed"}</strong>
-                  <p style={styles.smallText}>
-                    {training?.title || "Training removed"} • {training?.category || "-"} •{" "}
-                    {item.status} • Quiz: {item.quizScore ?? "NA"}
-                  </p>
+                  <p style={styles.smallText}>{training?.title || "Training removed"} • {training?.category || "-"} • {item.status} • Quiz: {item.quizScore ?? "NA"}</p>
                   <div style={styles.listActions}>
-                    <button style={styles.primaryBtnSmall} onClick={() => openTrainingMaterial(training)}>
-                      View
-                    </button>
-                    <button style={styles.secondarySmallBtn} onClick={() => openQuizForAssignment(item.id)}>
-                      Quiz
-                    </button>
-                    <button style={styles.deleteBtn} onClick={() => deleteAssignment(item.id)}>
-                      Delete Assignment
-                    </button>
+                    <button style={styles.primaryBtnSmall} onClick={() => openAssignmentViewer(item.id)}>View</button>
+                    <button style={styles.secondarySmallBtn} onClick={() => openQuizForAssignment(item.id)}>Quiz</button>
+                    <button style={styles.deleteBtn} onClick={() => deleteAssignment(item.id)}>Delete Assignment</button>
                   </div>
                 </div>
               );
@@ -1575,33 +1266,15 @@ const openEditEmployee = (emp) => {
             </div>
 
             <div style={styles.reportGrid}>
-              <div style={styles.reportCard}>
-                <p style={styles.smallText}>Completion Rate</p>
-                <h2 style={styles.statNumber}>{completionRate}%</h2>
-              </div>
-              <div style={styles.reportCard}>
-                <p style={styles.smallText}>Viewed</p>
-                <h2 style={styles.statNumber}>{viewedCount}</h2>
-              </div>
-              <div style={styles.reportCard}>
-                <p style={styles.smallText}>Average Quiz Score</p>
-                <h2 style={styles.statNumber}>{averageQuizScore}%</h2>
-              </div>
+              <div style={styles.reportCard}><p style={styles.smallText}>Completion Rate</p><h2 style={styles.statNumber}>{completionRate}%</h2></div>
+              <div style={styles.reportCard}><p style={styles.smallText}>Viewed</p><h2 style={styles.statNumber}>{viewedCount}</h2></div>
+              <div style={styles.reportCard}><p style={styles.smallText}>Average Quiz Score</p><h2 style={styles.statNumber}>{averageQuizScore}%</h2></div>
             </div>
 
             <div style={styles.reportGrid}>
-              <div style={styles.reportCard}>
-                <p style={styles.smallText}>Pending Employees</p>
-                <h2 style={styles.statNumber}>{pendingCount}</h2>
-              </div>
-              <div style={styles.reportCard}>
-                <p style={styles.smallText}>Employees</p>
-                <h2 style={styles.statNumber}>{employees.length}</h2>
-              </div>
-              <div style={styles.reportCard}>
-                <p style={styles.smallText}>Trainings</p>
-                <h2 style={styles.statNumber}>{trainings.length}</h2>
-              </div>
+              <div style={styles.reportCard}><p style={styles.smallText}>Pending Employees</p><h2 style={styles.statNumber}>{pendingCount}</h2></div>
+              <div style={styles.reportCard}><p style={styles.smallText}>Employees</p><h2 style={styles.statNumber}>{employees.length}</h2></div>
+              <div style={styles.reportCard}><p style={styles.smallText}>Trainings</p><h2 style={styles.statNumber}>{trainings.length}</h2></div>
             </div>
           </section>
         )}
@@ -1610,81 +1283,28 @@ const openEditEmployee = (emp) => {
       {showEmployeeModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modal}>
-            <h2 style={styles.modalTitle}>
-              {editEmployeeId ? "Edit Employee" : "Add Employee"}
-            </h2>
+            <h2 style={styles.modalTitle}>{editEmployeeId ? "Edit Employee" : "Add Employee"}</h2>
             <p style={styles.smallText}>Create or update employee data.</p>
 
             <label style={styles.label}>Employee Name</label>
-            <input
-              style={styles.input}
-              type="text"
-              value={employeeForm.name}
-              onChange={(e) =>
-                setEmployeeForm((prev) => ({ ...prev, name: e.target.value }))
-              }
-            />
-
+            <input style={styles.input} type="text" value={employeeForm.name} onChange={(e) => setEmployeeForm((prev) => ({ ...prev, name: e.target.value }))} />
             <label style={styles.label}>Department</label>
-            <input
-              style={styles.input}
-              type="text"
-              value={employeeForm.department}
-              onChange={(e) =>
-                setEmployeeForm((prev) => ({ ...prev, department: e.target.value }))
-              }
-            />
-
+            <input style={styles.input} type="text" value={employeeForm.department} onChange={(e) => setEmployeeForm((prev) => ({ ...prev, department: e.target.value }))} />
             <label style={styles.label}>Email</label>
-            <input
-              style={styles.input}
-              type="email"
-              value={employeeForm.email}
-              onChange={(e) =>
-                setEmployeeForm((prev) => ({ ...prev, email: e.target.value }))
-              }
-            />
-
+            <input style={styles.input} type="email" value={employeeForm.email} onChange={(e) => setEmployeeForm((prev) => ({ ...prev, email: e.target.value }))} />
             <label style={styles.label}>Password</label>
-            <input
-              style={styles.input}
-              type="text"
-              value={employeeForm.password}
-              onChange={(e) =>
-                setEmployeeForm((prev) => ({ ...prev, password: e.target.value }))
-              }
-            />
-
+            <input style={styles.input} type="text" value={employeeForm.password} onChange={(e) => setEmployeeForm((prev) => ({ ...prev, password: e.target.value }))} />
             <label style={styles.label}>Training Module</label>
-            <input
-              style={styles.input}
-              type="text"
-              value={employeeForm.training}
-              onChange={(e) =>
-                setEmployeeForm((prev) => ({ ...prev, training: e.target.value }))
-              }
-            />
-
+            <input style={styles.input} type="text" value={employeeForm.training} onChange={(e) => setEmployeeForm((prev) => ({ ...prev, training: e.target.value }))} />
             <label style={styles.label}>Status</label>
-            <select
-              style={styles.input}
-              value={employeeForm.status}
-              onChange={(e) =>
-                setEmployeeForm((prev) => ({ ...prev, status: e.target.value }))
-              }
-            >
+            <select style={styles.input} value={employeeForm.status} onChange={(e) => setEmployeeForm((prev) => ({ ...prev, status: e.target.value }))}>
               <option value="Pending">Pending</option>
               <option value="Viewed">Viewed</option>
               <option value="Completed">Completed</option>
             </select>
-
             <div style={styles.modalActions}>
-              <button style={styles.secondaryBtn} onClick={() => setShowEmployeeModal(false)}>
-                Cancel
-              </button>
-              <button style={styles.primaryBtnSmall} onClick={saveEmployee}>
-                Save Employee
-              </button>
+              <button style={styles.secondaryBtn} onClick={() => setShowEmployeeModal(false)}>Cancel</button>
+              <button style={styles.primaryBtnSmall} onClick={saveEmployee}>Save Employee</button>
             </div>
           </div>
         </div>
@@ -1692,93 +1312,31 @@ const openEditEmployee = (emp) => {
 
       {showTrainingModal && (
         <div style={styles.modalOverlay}>
-          <div style={styles.modal}>
-            <h2 style={styles.modalTitle}>
-              {editTrainingId ? "Edit Training" : "Add Training"}
-            </h2>
+          <div style={styles.modalLarge}>
+            <h2 style={styles.modalTitle}>{editTrainingId ? "Edit Training" : "Add Training"}</h2>
             <p style={styles.smallText}>Create or update training module data.</p>
 
             <label style={styles.label}>Training Title</label>
-            <input
-              style={styles.input}
-              type="text"
-              value={trainingForm.title}
-              onChange={(e) =>
-                setTrainingForm((prev) => ({ ...prev, title: e.target.value }))
-              }
-            />
-
+            <input style={styles.input} type="text" value={trainingForm.title} onChange={(e) => setTrainingForm((prev) => ({ ...prev, title: e.target.value }))} />
             <label style={styles.label}>Category</label>
-            <select
-              style={styles.input}
-              value={trainingForm.category}
-              onChange={(e) =>
-                setTrainingForm((prev) => ({ ...prev, category: e.target.value }))
-              }
-            >
-              {CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
+            <select style={styles.input} value={trainingForm.category} onChange={(e) => setTrainingForm((prev) => ({ ...prev, category: e.target.value }))}>
+              {CATEGORIES.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
             </select>
-
             <label style={styles.label}>Department</label>
-            <input
-              style={styles.input}
-              type="text"
-              value={trainingForm.department}
-              onChange={(e) =>
-                setTrainingForm((prev) => ({ ...prev, department: e.target.value }))
-              }
-            />
-
+            <input style={styles.input} type="text" value={trainingForm.department} onChange={(e) => setTrainingForm((prev) => ({ ...prev, department: e.target.value }))} />
             <label style={styles.label}>Duration</label>
-            <input
-              style={styles.input}
-              type="text"
-              value={trainingForm.duration}
-              onChange={(e) =>
-                setTrainingForm((prev) => ({ ...prev, duration: e.target.value }))
-              }
-            />
-
+            <input style={styles.input} type="text" value={trainingForm.duration} onChange={(e) => setTrainingForm((prev) => ({ ...prev, duration: e.target.value }))} />
             <label style={styles.label}>Content Type</label>
-            <select
-              style={styles.input}
-              value={trainingForm.type}
-              onChange={(e) =>
-                setTrainingForm((prev) => ({ ...prev, type: e.target.value }))
-              }
-            >
+            <select style={styles.input} value={trainingForm.type} onChange={(e) => setTrainingForm((prev) => ({ ...prev, type: e.target.value }))}>
               <option value="Video">Video</option>
               <option value="PDF">PDF</option>
               <option value="PPT">PPT</option>
             </select>
-
             <label style={styles.label}>Material Name</label>
-            <input
-              style={styles.input}
-              type="text"
-              value={trainingForm.materialName}
-              onChange={(e) =>
-                setTrainingForm((prev) => ({ ...prev, materialName: e.target.value }))
-              }
-              placeholder="File name or title"
-            />
-
+            <input style={styles.input} type="text" value={trainingForm.materialName} onChange={(e) => setTrainingForm((prev) => ({ ...prev, materialName: e.target.value }))} placeholder="File name or title" />
             <label style={styles.label}>Material Link</label>
-            <input
-              style={styles.input}
-              type="text"
-              value={trainingForm.materialLink}
-              onChange={(e) =>
-                setTrainingForm((prev) => ({ ...prev, materialLink: e.target.value }))
-              }
-              placeholder="https://..."
-            />
-
-            <label style={styles.label}>Upload File (PDF / PPT / Video)</label>
+            <input style={styles.input} type="text" value={trainingForm.materialLink} onChange={(e) => setTrainingForm((prev) => ({ ...prev, materialLink: e.target.value }))} placeholder="https://..." />
+            <label style={styles.label}>Upload File Name Only (safe)</label>
             <input
               style={styles.input}
               type="file"
@@ -1786,57 +1344,22 @@ const openEditEmployee = (emp) => {
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
-
-                setTrainingForm((prev) => ({
-  ...prev,
-  materialName: file.name,
-  materialLink: "",
-  materialDataUrl: "",
-}));
-
-alert("File name saved successfully.");
+                setTrainingForm((prev) => ({ ...prev, materialName: file.name, materialLink: "" }));
+                alert("File name saved successfully. Add a public link for opening the file.");
               }}
             />
-
             <label style={styles.label}>Mandatory</label>
-            <select
-              style={styles.input}
-              value={trainingForm.mandatory}
-              onChange={(e) =>
-                setTrainingForm((prev) => ({ ...prev, mandatory: e.target.value }))
-              }
-            >
+            <select style={styles.input} value={trainingForm.mandatory} onChange={(e) => setTrainingForm((prev) => ({ ...prev, mandatory: e.target.value }))}>
               <option value="Yes">Yes</option>
               <option value="No">No</option>
             </select>
-
             <label style={styles.label}>Description</label>
-            <textarea
-              style={styles.textarea}
-              value={trainingForm.description}
-              onChange={(e) =>
-                setTrainingForm((prev) => ({ ...prev, description: e.target.value }))
-              }
-              placeholder="Training description"
-            />
-
+            <textarea style={styles.textarea} value={trainingForm.description} onChange={(e) => setTrainingForm((prev) => ({ ...prev, description: e.target.value }))} placeholder="Training description" />
             <label style={styles.label}>Objectives</label>
-            <textarea
-              style={styles.textarea}
-              value={trainingForm.objectives}
-              onChange={(e) =>
-                setTrainingForm((prev) => ({ ...prev, objectives: e.target.value }))
-              }
-              placeholder="Training objectives"
-            />
-
+            <textarea style={styles.textarea} value={trainingForm.objectives} onChange={(e) => setTrainingForm((prev) => ({ ...prev, objectives: e.target.value }))} placeholder="Training objectives" />
             <div style={styles.modalActions}>
-              <button style={styles.secondaryBtn} onClick={() => setShowTrainingModal(false)}>
-                Cancel
-              </button>
-              <button style={styles.primaryBtnSmall} onClick={saveTraining}>
-                Save Training
-              </button>
+              <button style={styles.secondaryBtn} onClick={() => setShowTrainingModal(false)}>Cancel</button>
+              <button style={styles.primaryBtnSmall} onClick={saveTraining}>Save Training</button>
             </div>
           </div>
         </div>
@@ -1847,52 +1370,19 @@ alert("File name saved successfully.");
           <div style={styles.modal}>
             <h2 style={styles.modalTitle}>Assign Training</h2>
             <p style={styles.smallText}>Assign a module to an employee.</p>
-
             <label style={styles.label}>Employee</label>
-            <select
-              style={styles.input}
-              value={assignForm.employeeId}
-              onChange={(e) =>
-                setAssignForm((prev) => ({
-                  ...prev,
-                  employeeId: e.target.value,
-                }))
-              }
-            >
+            <select style={styles.input} value={assignForm.employeeId} onChange={(e) => setAssignForm((prev) => ({ ...prev, employeeId: e.target.value }))}>
               <option value="">Select employee</option>
-              {employees.map((emp) => (
-                <option key={emp.id} value={emp.id}>
-                  {emp.name} - {emp.department}
-                </option>
-              ))}
+              {employees.map((emp) => <option key={emp.id} value={emp.id}>{emp.name} - {emp.department}</option>)}
             </select>
-
             <label style={styles.label}>Training</label>
-            <select
-              style={styles.input}
-              value={assignForm.trainingId}
-              onChange={(e) =>
-                setAssignForm((prev) => ({
-                  ...prev,
-                  trainingId: e.target.value,
-                }))
-              }
-            >
+            <select style={styles.input} value={assignForm.trainingId} onChange={(e) => setAssignForm((prev) => ({ ...prev, trainingId: e.target.value }))}>
               <option value="">Select training</option>
-              {trainings.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.title} - {item.category}
-                </option>
-              ))}
+              {trainings.map((item) => <option key={item.id} value={item.id}>{item.title} - {item.category}</option>)}
             </select>
-
             <div style={styles.modalActions}>
-              <button style={styles.secondaryBtn} onClick={() => setShowAssignModal(false)}>
-                Cancel
-              </button>
-              <button style={styles.primaryBtnSmall} onClick={saveAssignment}>
-                Save Assignment
-              </button>
+              <button style={styles.secondaryBtn} onClick={() => setShowAssignModal(false)}>Cancel</button>
+              <button style={styles.primaryBtnSmall} onClick={saveAssignment}>Save Assignment</button>
             </div>
           </div>
         </div>
@@ -1911,14 +1401,9 @@ alert("File name saved successfully.");
               <p style={styles.smallText}>Completion Date: {activeCertificate.date}</p>
               <p style={styles.smallText}>Quiz Score: {activeCertificate.score}%</p>
             </div>
-
             <div style={styles.modalActions}>
-              <button style={styles.secondaryBtn} onClick={() => setShowCertificateModal(false)}>
-                Close
-              </button>
-              <button style={styles.primaryBtnSmall} onClick={printCertificate}>
-                Print Certificate
-              </button>
+              <button style={styles.secondaryBtn} onClick={() => setShowCertificateModal(false)}>Close</button>
+              <button style={styles.primaryBtnSmall} onClick={() => window.print()}>Print Certificate</button>
             </div>
           </div>
         </div>
@@ -1931,11 +1416,34 @@ const styles = {
   app: {
     display: "flex",
     minHeight: "100vh",
+    width: "100%",
+    overflowX: "hidden",
     fontFamily: "Arial, sans-serif",
     background: "#f8fafc",
   },
+  loading: {
+    minHeight: "100vh",
+    display: "grid",
+    placeItems: "center",
+    fontSize: "18px",
+    color: "#0f172a",
+    background: "#f8fafc",
+  },
+  banner: {
+    width: "100%",
+    marginBottom: "16px",
+    padding: "12px 14px",
+    borderRadius: "12px",
+    background: "#eff6ff",
+    color: "#1d4ed8",
+    fontSize: "13px",
+    fontWeight: 700,
+    boxSizing: "border-box",
+  },
   sidebar: {
     width: "260px",
+    minWidth: "260px",
+    flexShrink: 0,
     background: "#0f172a",
     color: "white",
     padding: "24px",
@@ -1943,6 +1451,7 @@ const styles = {
     flexDirection: "column",
     justifyContent: "space-between",
     gap: "18px",
+    boxSizing: "border-box",
   },
   logo: {
     color: "#38bdf8",
@@ -1968,6 +1477,7 @@ const styles = {
     gap: "10px",
   },
   menuBtn: {
+    width: "100%",
     padding: "12px 14px",
     borderRadius: "10px",
     border: "none",
@@ -1975,6 +1485,9 @@ const styles = {
     color: "white",
     cursor: "pointer",
     textAlign: "left",
+    fontSize: "14px",
+    fontWeight: 600,
+    boxSizing: "border-box",
   },
   menuBtnActive: {
     background: "#2563eb",
@@ -2024,7 +1537,10 @@ const styles = {
   },
   content: {
     flex: 1,
+    width: "100%",
+    minWidth: 0,
     padding: "34px",
+    boxSizing: "border-box",
   },
   smallTitle: {
     margin: 0,
@@ -2060,6 +1576,7 @@ const styles = {
     background: "white",
   },
   heroCard: {
+    width: "100%",
     background: "white",
     border: "1px solid #e2e8f0",
     borderRadius: "22px",
@@ -2071,6 +1588,7 @@ const styles = {
     marginBottom: "22px",
     boxShadow: "0 10px 25px rgba(15, 23, 42, 0.05)",
     flexWrap: "wrap",
+    boxSizing: "border-box",
   },
   miniBadge: {
     display: "inline-block",
@@ -2111,11 +1629,12 @@ const styles = {
   },
   statsGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: "16px",
     marginBottom: "22px",
+    width: "100%",
   },
-  card: {
+  statCard: {
     background: "white",
     padding: "22px",
     borderRadius: "18px",
@@ -2130,16 +1649,20 @@ const styles = {
   },
   grid2: {
     display: "grid",
-    gridTemplateColumns: "1.2fr 1fr",
+    gridTemplateColumns: "minmax(0, 1.3fr) minmax(0, 1fr)",
     gap: "18px",
     alignItems: "start",
+    width: "100%",
   },
   panel: {
+    width: "100%",
+    minWidth: 0,
     background: "white",
     border: "1px solid #e2e8f0",
     borderRadius: "22px",
     padding: "22px",
     boxShadow: "0 10px 25px rgba(15, 23, 42, 0.05)",
+    boxSizing: "border-box",
   },
   panelHeader: {
     display: "flex",
@@ -2193,10 +1716,6 @@ const styles = {
     gap: "10px",
     flexWrap: "wrap",
   },
-  mutedText: {
-    color: "#64748b",
-    fontSize: "13px",
-  },
   smallText: {
     color: "#64748b",
     fontSize: "13px",
@@ -2214,8 +1733,14 @@ const styles = {
     outline: "none",
     background: "white",
   },
+  tableWrap: {
+    width: "100%",
+    overflowX: "auto",
+    display: "block",
+  },
   table: {
     width: "100%",
+    minWidth: "900px",
     borderCollapse: "collapse",
   },
   th: {
@@ -2267,9 +1792,10 @@ const styles = {
   },
   reportGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: "16px",
     marginBottom: "16px",
+    width: "100%",
   },
   reportCard: {
     border: "1px solid #e2e8f0",
@@ -2286,24 +1812,27 @@ const styles = {
     justifyContent: "center",
     padding: "20px",
     zIndex: 50,
+    overflowY: "auto",
   },
   modal: {
-    width: "100%",
-    maxWidth: "520px",
+    width: "min(92vw, 620px)",
+    maxHeight: "90vh",
     background: "white",
     borderRadius: "20px",
     padding: "24px",
     boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
+    overflowY: "auto",
+    boxSizing: "border-box",
   },
   modalLarge: {
-    width: "100%",
-    maxWidth: "760px",
+    width: "min(94vw, 760px)",
+    maxHeight: "90vh",
     background: "white",
     borderRadius: "20px",
     padding: "24px",
     boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
-    maxHeight: "90vh",
     overflowY: "auto",
+    boxSizing: "border-box",
   },
   modalTitle: {
     marginTop: 0,
