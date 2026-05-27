@@ -1,14 +1,8 @@
-import { createClient } from "@supabase/supabase-js";
 import { useEffect, useMemo, useState } from "react";
 
+const STORAGE_KEY = "ralson_lms_rebuild_v1";
 const ADMIN_EMAIL = "admin@company.com";
 const ADMIN_PASSWORD = "admin123";
-
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "";
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
-const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
-
-const TABLE_NAME = "lms_state";
 
 const CATEGORIES = ["Onboarding", "Soft Skills", "Sales", "Technical", "HR Policies"];
 
@@ -197,8 +191,8 @@ const seedAssignments = [
     status: "Completed",
     viewed: true,
     quizScore: 100,
-    completedAt: "2026-05-01T00:00:00.000Z",
-    lastViewed: "2026-05-01T00:00:00.000Z",
+    completedAt: "2026-05-01",
+    lastViewed: "2026-05-01",
   },
   {
     id: 2,
@@ -239,6 +233,22 @@ const emptyAssignForm = {
   trainingId: "",
 };
 
+const safeParse = (value, fallback) => {
+  try {
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const getStorageState = () => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const raw = localStorage.getItem(STORAGE_KEY);
+  return safeParse(raw, null);
+};
+
 const buildQuiz = (category) => {
   const quiz = QUIZ_BANK[category] || QUIZ_BANK.Onboarding;
   return quiz.map((item) => ({ ...item }));
@@ -249,26 +259,17 @@ const getMenuStyle = (active, current) => ({
   ...(active === current ? styles.menuBtnActive : {}),
 });
 
-const formatDate = (value) => {
-  if (!value) return "-";
-  try {
-    return new Date(value).toLocaleDateString();
-  } catch {
-    return value;
-  }
-};
-
 export default function App() {
-  const [isLoaded, setIsLoaded] = useState(false);
-  const [storageStatus, setStorageStatus] = useState("");
+  const saved = getStorageState();
+
   const [session, setSession] = useState(null);
   const [adminPage, setAdminPage] = useState("dashboard");
   const [employeePage, setEmployeePage] = useState("dashboard");
 
-  const [employees, setEmployees] = useState(seedEmployees);
-  const [trainings, setTrainings] = useState(seedTrainings);
-  const [assignments, setAssignments] = useState(seedAssignments);
-  const [quizResults, setQuizResults] = useState([]);
+  const [employees, setEmployees] = useState(saved?.employees ?? seedEmployees);
+  const [trainings, setTrainings] = useState(saved?.trainings ?? seedTrainings);
+  const [assignments, setAssignments] = useState(saved?.assignments ?? seedAssignments);
+  const [quizResults, setQuizResults] = useState(saved?.quizResults ?? []);
 
   const [loginForm, setLoginForm] = useState({ role: "admin", email: "", password: "" });
   const [search, setSearch] = useState("");
@@ -290,105 +291,36 @@ export default function App() {
   const [showQuizModal, setShowQuizModal] = useState(false);
   const [showCertificateModal, setShowCertificateModal] = useState(false);
   const [activeCertificate, setActiveCertificate] = useState(null);
+  const [isLoaded, setIsLoaded] = useState(true);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const loadCloudState = async () => {
-      if (!supabase) {
-        setStorageStatus("Supabase env is missing. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.");
-        setIsLoaded(true);
-        return;
-      }
-
-      try {
-        const { data, error } = await supabase
-          .from(TABLE_NAME)
-          .select("*")
-          .eq("id", 1)
-          .maybeSingle();
-
-        if (error && error.code !== "PGRST116") {
-          throw error;
-        }
-
-        const safe = data || {
-          employees: seedEmployees,
-          trainings: seedTrainings,
-          assignments: seedAssignments,
-          quiz_results: [],
-        };
-
-        if (cancelled) return;
-
-        setEmployees(Array.isArray(safe.employees) ? safe.employees : seedEmployees);
-        setTrainings(Array.isArray(safe.trainings) ? safe.trainings : seedTrainings);
-        setAssignments(Array.isArray(safe.assignments) ? safe.assignments : seedAssignments);
-        setQuizResults(Array.isArray(safe.quiz_results) ? safe.quiz_results : []);
-        setStorageStatus("Connected to Supabase cloud storage.");
-
-        if (!data) {
-          await supabase.from(TABLE_NAME).upsert({
-            id: 1,
-            employees: seedEmployees,
-            trainings: seedTrainings,
-            assignments: seedAssignments,
-            quiz_results: [],
-            updated_at: new Date().toISOString(),
-          });
-        }
-      } catch (error) {
-        console.error(error);
-        if (!cancelled) {
-          setStorageStatus(`Storage load failed. Using local fallback. ${error?.message || ""}`);
-        }
-      } finally {
-        if (!cancelled) setIsLoaded(true);
-      }
-    };
-
-    loadCloudState();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!isLoaded || !supabase) return;
-
-    const timer = setTimeout(async () => {
-      try {
-        const { error } = await supabase.from(TABLE_NAME).upsert({
-          id: 1,
-          employees,
-          trainings,
-          assignments,
-          quiz_results: quizResults,
-          updated_at: new Date().toISOString(),
-        });
-
-        if (error) throw error;
-        setStorageStatus("Data synced to Supabase.");
-      } catch (error) {
-        console.error(error);
-        setStorageStatus(`Sync failed: ${error?.message || "Unknown error"}`);
-      }
-    }, 400);
-
-    return () => clearTimeout(timer);
-  }, [isLoaded, employees, trainings, assignments, quizResults]);
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ employees, trainings, assignments, quizResults })
+      );
+    } catch (error) {
+      console.error("Save failed", error);
+    }
+  }, [employees, trainings, assignments, quizResults]);
 
   const currentEmployee =
     session?.role === "employee" ? employees.find((e) => e.id === session.userId) : null;
 
-  const myAssignments = currentEmployee ? assignments.filter((a) => a.employeeId === currentEmployee.id) : [];
-  const myQuizHistory = currentEmployee ? quizResults.filter((q) => q.employeeId === currentEmployee.id) : [];
+  const myAssignments = currentEmployee
+    ? assignments.filter((a) => a.employeeId === currentEmployee.id)
+    : [];
+
+  const myQuizHistory = currentEmployee
+    ? quizResults.filter((q) => q.employeeId === currentEmployee.id)
+    : [];
 
   const completedCount = assignments.filter((a) => a.status === "Completed").length;
   const pendingCount = assignments.filter((a) => a.status === "Pending").length;
   const viewedCount = assignments.filter((a) => a.status === "Viewed").length;
-  const completionRate = assignments.length ? Math.round((completedCount / assignments.length) * 100) : 0;
+  const completionRate = assignments.length
+    ? Math.round((completedCount / assignments.length) * 100)
+    : 0;
   const averageQuizScore = quizResults.length
     ? Math.round(quizResults.reduce((sum, item) => sum + item.score, 0) / quizResults.length)
     : 0;
@@ -397,7 +329,8 @@ export default function App() {
     const term = search.trim().toLowerCase();
     return employees.filter((e) => {
       const matchesSearch =
-        !term || [e.name, e.department, e.email, e.training, e.status].join(" ").toLowerCase().includes(term);
+        !term ||
+        [e.name, e.department, e.email, e.training, e.status].join(" ").toLowerCase().includes(term);
       const matchesDepartment = departmentFilter === "All" || e.department === departmentFilter;
       return matchesSearch && matchesDepartment;
     });
@@ -447,12 +380,6 @@ export default function App() {
     setEmployeePage("dashboard");
   };
 
-  const openNewEmployee = () => {
-    setEmployeeForm(emptyEmployeeForm);
-    setEditEmployeeId(null);
-    setShowEmployeeModal(true);
-  };
-
   const openEditEmployee = (emp) => {
     if (!emp) return;
     setEmployeeForm({
@@ -467,10 +394,10 @@ export default function App() {
     setShowEmployeeModal(true);
   };
 
-  const openNewTraining = () => {
-    setTrainingForm(emptyTrainingForm);
-    setEditTrainingId(null);
-    setShowTrainingModal(true);
+  const openNewEmployee = () => {
+    setEmployeeForm(emptyEmployeeForm);
+    setEditEmployeeId(null);
+    setShowEmployeeModal(true);
   };
 
   const openEditTraining = (training) => {
@@ -488,6 +415,12 @@ export default function App() {
       materialLink: training.materialLink || "",
     });
     setEditTrainingId(training.id);
+    setShowTrainingModal(true);
+  };
+
+  const openNewTraining = () => {
+    setTrainingForm(emptyTrainingForm);
+    setEditTrainingId(null);
     setShowTrainingModal(true);
   };
 
@@ -530,7 +463,6 @@ export default function App() {
         setEmployees((prev) =>
           prev.map((emp) => (emp.training === oldTraining.title ? { ...emp, training: trainingForm.title } : emp))
         );
-
         setAssignments((prev) =>
           prev.map((a) =>
             a.trainingId === oldTraining.id
@@ -615,11 +547,12 @@ export default function App() {
 
   const openTrainingMaterial = (training) => {
     if (!training) return;
-    if (!training.materialLink) {
-      alert("No public link is attached. Add a Google Drive / OneDrive / public link.");
+    const file = training.materialLink;
+    if (!file) {
+      alert("No external file link available for this training.");
       return;
     }
-    window.open(training.materialLink, "_blank", "noopener,noreferrer");
+    window.open(file, "_blank", "noopener,noreferrer");
   };
 
   const openAssignmentViewer = (assignmentId) => {
@@ -724,7 +657,6 @@ export default function App() {
   const markCompleted = (assignmentId) => {
     const assignment = assignments.find((item) => item.id === assignmentId);
     if (!assignment) return;
-
     setAssignments((prev) =>
       prev.map((item) =>
         item.id === assignmentId
@@ -740,7 +672,9 @@ export default function App() {
   };
 
   const selectedAssignment = assignments.find((item) => item.id === activeAssignmentId);
-  const selectedTraining = selectedAssignment ? trainings.find((t) => t.id === selectedAssignment.trainingId) : null;
+  const selectedTraining = selectedAssignment
+    ? trainings.find((t) => t.id === selectedAssignment.trainingId)
+    : null;
 
   if (!isLoaded) {
     return <div style={styles.loading}>Loading LMS...</div>;
@@ -861,10 +795,10 @@ export default function App() {
               </section>
 
               <div style={styles.statsGrid}>
-                <div style={styles.statCard}><h2 style={styles.statNumber}>{myAssignments.filter((a) => a.status === "Completed").length}</h2><p>Completed</p></div>
-                <div style={styles.statCard}><h2 style={styles.statNumber}>{myAssignments.filter((a) => a.status === "Viewed").length}</h2><p>Viewed</p></div>
-                <div style={styles.statCard}><h2 style={styles.statNumber}>{myAssignments.filter((a) => a.status === "Pending").length}</h2><p>Pending</p></div>
-                <div style={styles.statCard}><h2 style={styles.statNumber}>{myQuizHistory.length ? Math.round(myQuizHistory.reduce((s, item) => s + item.score, 0) / myQuizHistory.length) : 0}%</h2><p>Avg Quiz Score</p></div>
+                <div style={styles.statCard}><h2>{myAssignments.filter((a) => a.status === "Completed").length}</h2><p>Completed</p></div>
+                <div style={styles.statCard}><h2>{myAssignments.filter((a) => a.status === "Viewed").length}</h2><p>Viewed</p></div>
+                <div style={styles.statCard}><h2>{myAssignments.filter((a) => a.status === "Pending").length}</h2><p>Pending</p></div>
+                <div style={styles.statCard}><h2>{myQuizHistory.length ? Math.round(myQuizHistory.reduce((s, item) => s + item.score, 0) / myQuizHistory.length) : 0}%</h2><p>Avg Quiz Score</p></div>
               </div>
 
               <section style={styles.panel}>
@@ -973,9 +907,9 @@ export default function App() {
                 <p><strong>Uploaded Material:</strong> {selectedTraining.materialName || "-"}</p>
                 <p><strong>Mandatory:</strong> {selectedTraining.mandatory}</p>
                 <div style={styles.listActions}>
-                  <button style={styles.primaryBtnSmall} onClick={() => openTrainingMaterial(selectedTraining)}>Open Link</button>
+                  <button style={styles.primaryBtnSmall} onClick={() => openTrainingMaterial(selectedTraining)}>Open File</button>
                   {selectedTraining.materialLink ? (
-                    <a href={selectedTraining.materialLink} target="_blank" rel="noreferrer" style={styles.linkBtn}>Open in New Tab</a>
+                    <a href={selectedTraining.materialLink} target="_blank" rel="noreferrer" style={styles.linkBtn}>Open Link</a>
                   ) : null}
                 </div>
               </div>
@@ -1069,8 +1003,6 @@ export default function App() {
       </aside>
 
       <main style={styles.content}>
-        <div style={styles.banner}>{storageStatus || ""}</div>
-
         <div style={styles.headerRow}>
           <div>
             <p style={styles.smallTitle}>Corporate Training Dashboard</p>
@@ -1110,10 +1042,10 @@ export default function App() {
             </section>
 
             <div style={styles.statsGrid}>
-              <div style={styles.statCard}><h2 style={styles.statNumber}>{employees.length}</h2><p>Total Employees</p></div>
-              <div style={styles.statCard}><h2 style={styles.statNumber}>{trainings.length}</h2><p>Total Trainings</p></div>
-              <div style={styles.statCard}><h2 style={styles.statNumber}>{completedCount}</h2><p>Completed</p></div>
-              <div style={styles.statCard}><h2 style={styles.statNumber}>{completionRate}%</h2><p>Completion Rate</p></div>
+              <div style={styles.statCard}><h2>{employees.length}</h2><p>Total Employees</p></div>
+              <div style={styles.statCard}><h2>{trainings.length}</h2><p>Total Trainings</p></div>
+              <div style={styles.statCard}><h2>{completedCount}</h2><p>Completed</p></div>
+              <div style={styles.statCard}><h2>{completionRate}%</h2><p>Completion Rate</p></div>
             </div>
 
             <div style={styles.grid2}>
@@ -1318,24 +1250,31 @@ export default function App() {
 
             <label style={styles.label}>Training Title</label>
             <input style={styles.input} type="text" value={trainingForm.title} onChange={(e) => setTrainingForm((prev) => ({ ...prev, title: e.target.value }))} />
+
             <label style={styles.label}>Category</label>
             <select style={styles.input} value={trainingForm.category} onChange={(e) => setTrainingForm((prev) => ({ ...prev, category: e.target.value }))}>
               {CATEGORIES.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
             </select>
+
             <label style={styles.label}>Department</label>
             <input style={styles.input} type="text" value={trainingForm.department} onChange={(e) => setTrainingForm((prev) => ({ ...prev, department: e.target.value }))} />
+
             <label style={styles.label}>Duration</label>
             <input style={styles.input} type="text" value={trainingForm.duration} onChange={(e) => setTrainingForm((prev) => ({ ...prev, duration: e.target.value }))} />
+
             <label style={styles.label}>Content Type</label>
             <select style={styles.input} value={trainingForm.type} onChange={(e) => setTrainingForm((prev) => ({ ...prev, type: e.target.value }))}>
               <option value="Video">Video</option>
               <option value="PDF">PDF</option>
               <option value="PPT">PPT</option>
             </select>
+
             <label style={styles.label}>Material Name</label>
             <input style={styles.input} type="text" value={trainingForm.materialName} onChange={(e) => setTrainingForm((prev) => ({ ...prev, materialName: e.target.value }))} placeholder="File name or title" />
+
             <label style={styles.label}>Material Link</label>
             <input style={styles.input} type="text" value={trainingForm.materialLink} onChange={(e) => setTrainingForm((prev) => ({ ...prev, materialLink: e.target.value }))} placeholder="https://..." />
+
             <label style={styles.label}>Upload File Name Only (safe)</label>
             <input
               style={styles.input}
@@ -1344,19 +1283,27 @@ export default function App() {
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
-                setTrainingForm((prev) => ({ ...prev, materialName: file.name, materialLink: "" }));
+                setTrainingForm((prev) => ({
+                  ...prev,
+                  materialName: file.name,
+                  materialLink: "",
+                }));
                 alert("File name saved successfully. Add a public link for opening the file.");
               }}
             />
+
             <label style={styles.label}>Mandatory</label>
             <select style={styles.input} value={trainingForm.mandatory} onChange={(e) => setTrainingForm((prev) => ({ ...prev, mandatory: e.target.value }))}>
               <option value="Yes">Yes</option>
               <option value="No">No</option>
             </select>
+
             <label style={styles.label}>Description</label>
             <textarea style={styles.textarea} value={trainingForm.description} onChange={(e) => setTrainingForm((prev) => ({ ...prev, description: e.target.value }))} placeholder="Training description" />
+
             <label style={styles.label}>Objectives</label>
             <textarea style={styles.textarea} value={trainingForm.objectives} onChange={(e) => setTrainingForm((prev) => ({ ...prev, objectives: e.target.value }))} placeholder="Training objectives" />
+
             <div style={styles.modalActions}>
               <button style={styles.secondaryBtn} onClick={() => setShowTrainingModal(false)}>Cancel</button>
               <button style={styles.primaryBtnSmall} onClick={saveTraining}>Save Training</button>
@@ -1429,17 +1376,6 @@ const styles = {
     color: "#0f172a",
     background: "#f8fafc",
   },
-  banner: {
-    width: "100%",
-    marginBottom: "16px",
-    padding: "12px 14px",
-    borderRadius: "12px",
-    background: "#eff6ff",
-    color: "#1d4ed8",
-    fontSize: "13px",
-    fontWeight: 700,
-    boxSizing: "border-box",
-  },
   sidebar: {
     width: "260px",
     minWidth: "260px",
@@ -1463,13 +1399,6 @@ const styles = {
     color: "#94a3b8",
     marginTop: "6px",
     marginBottom: "22px",
-  },
-  profileCard: {
-    background: "#111827",
-    border: "1px solid rgba(255,255,255,0.08)",
-    borderRadius: "16px",
-    padding: "12px",
-    marginBottom: "12px",
   },
   menu: {
     display: "flex",
