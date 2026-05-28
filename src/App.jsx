@@ -295,10 +295,14 @@ export default function App() {
   const [isLoaded, setIsLoaded] = useState(true);
 
   useEffect(() => {
-  localStorage.setItem("employees", JSON.stringify(employees));
-  localStorage.setItem("trainings", JSON.stringify(trainings));
-  localStorage.setItem("assignments", JSON.stringify(assignments));
-  localStorage.setItem("quizResults", JSON.stringify(quizResults));
+  const appState = {
+    employees,
+    trainings,
+    assignments,
+    quizResults,
+  };
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
 
   if (!supabase) return;
 
