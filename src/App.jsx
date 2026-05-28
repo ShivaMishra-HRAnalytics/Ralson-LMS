@@ -1,3 +1,4 @@
+import { supabase } from "./supabaseClient";
 import { useEffect, useMemo, useState } from "react";
 
 const STORAGE_KEY = "ralson_lms_rebuild_v1";
@@ -294,15 +295,33 @@ export default function App() {
   const [isLoaded, setIsLoaded] = useState(true);
 
   useEffect(() => {
+  localStorage.setItem("employees", JSON.stringify(employees));
+  localStorage.setItem("trainings", JSON.stringify(trainings));
+  localStorage.setItem("assignments", JSON.stringify(assignments));
+  localStorage.setItem("quizResults", JSON.stringify(quizResults));
+
+  if (!supabase) return;
+
+  const timer = setTimeout(async () => {
     try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ employees, trainings, assignments, quizResults })
-      );
+      const { error } = await supabase.from("lms_state").upsert({
+        id: 1,
+        employees,
+        trainings,
+        assignments,
+        quiz_results: quizResults,
+        updated_at: new Date().toISOString(),
+      });
+
+      if (error) throw error;
+      console.log("Synced to Supabase");
     } catch (error) {
-      console.error("Save failed", error);
+      console.error("Supabase sync failed:", error);
     }
-  }, [employees, trainings, assignments, quizResults]);
+  }, 400);
+
+  return () => clearTimeout(timer);
+}, [employees, trainings, assignments, quizResults]);
 
   const currentEmployee =
     session?.role === "employee" ? employees.find((e) => e.id === session.userId) : null;
