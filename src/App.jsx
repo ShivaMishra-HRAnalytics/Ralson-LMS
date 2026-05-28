@@ -1,5 +1,6 @@
 import { supabase } from "./supabaseClient";
 import { useEffect, useMemo, useState } from "react";
+const TABLE_NAME = "lms_state";
 
 const STORAGE_KEY = "ralson_lms_rebuild_v1";
 const ADMIN_EMAIL = "admin@company.com";
@@ -261,54 +262,112 @@ const getMenuStyle = (active, current) => ({
 });
 
 export default function App() {
-  const saved = getStorageState();
-
   const [session, setSession] = useState(null);
-  const [adminPage, setAdminPage] = useState("dashboard");
-  const [employeePage, setEmployeePage] = useState("dashboard");
+const [adminPage, setAdminPage] = useState("dashboard");
+const [employeePage, setEmployeePage] = useState("dashboard");
 
-  const [employees, setEmployees] = useState(saved?.employees ?? seedEmployees);
-  const [trainings, setTrainings] = useState(saved?.trainings ?? seedTrainings);
-  const [assignments, setAssignments] = useState(saved?.assignments ?? seedAssignments);
-  const [quizResults, setQuizResults] = useState(saved?.quizResults ?? []);
+const [employees, setEmployees] = useState([]);
+const [trainings, setTrainings] = useState([]);
+const [assignments, setAssignments] = useState([]);
+const [quizResults, setQuizResults] = useState([]);
 
-  const [loginForm, setLoginForm] = useState({ role: "admin", email: "", password: "" });
-  const [search, setSearch] = useState("");
-  const [departmentFilter, setDepartmentFilter] = useState("All");
-  const [categoryFilter, setCategoryFilter] = useState("All");
+const [loginForm, setLoginForm] = useState({ role: "admin", email: "", password: "" });
+const [search, setSearch] = useState("");
+const [departmentFilter, setDepartmentFilter] = useState("All");
+const [categoryFilter, setCategoryFilter] = useState("All");
 
-  const [employeeForm, setEmployeeForm] = useState(emptyEmployeeForm);
-  const [trainingForm, setTrainingForm] = useState(emptyTrainingForm);
-  const [assignForm, setAssignForm] = useState(emptyAssignForm);
-  const [quizAnswers, setQuizAnswers] = useState([]);
+const [employeeForm, setEmployeeForm] = useState(emptyEmployeeForm);
+const [trainingForm, setTrainingForm] = useState(emptyTrainingForm);
+const [assignForm, setAssignForm] = useState(emptyAssignForm);
+const [quizAnswers, setQuizAnswers] = useState([]);
 
-  const [editEmployeeId, setEditEmployeeId] = useState(null);
-  const [editTrainingId, setEditTrainingId] = useState(null);
-  const [activeAssignmentId, setActiveAssignmentId] = useState(null);
-  const [showEmployeeModal, setShowEmployeeModal] = useState(false);
-  const [showTrainingModal, setShowTrainingModal] = useState(false);
-  const [showAssignModal, setShowAssignModal] = useState(false);
-  const [showViewerModal, setShowViewerModal] = useState(false);
-  const [showQuizModal, setShowQuizModal] = useState(false);
-  const [showCertificateModal, setShowCertificateModal] = useState(false);
-  const [activeCertificate, setActiveCertificate] = useState(null);
-  const [isLoaded, setIsLoaded] = useState(true);
+const [editEmployeeId, setEditEmployeeId] = useState(null);
+const [editTrainingId, setEditTrainingId] = useState(null);
+const [activeAssignmentId, setActiveAssignmentId] = useState(null);
+const [showEmployeeModal, setShowEmployeeModal] = useState(false);
+const [showTrainingModal, setShowTrainingModal] = useState(false);
+const [showAssignModal, setShowAssignModal] = useState(false);
+const [showViewerModal, setShowViewerModal] = useState(false);
+const [showQuizModal, setShowQuizModal] = useState(false);
+const [showCertificateModal, setShowCertificateModal] = useState(false);
+const [activeCertificate, setActiveCertificate] = useState(null);
+const [isLoaded, setIsLoaded] = useState(false);
+const [storageStatus, setStorageStatus] = useState("");
 
-  useEffect(() => {
-  const appState = {
-    employees,
-    trainings,
-    assignments,
-    quizResults,
+useEffect(() => {
+  let cancelled = false;
+
+  const loadCloudState = async () => {
+    if (!supabase) {
+      setStorageStatus("Supabase env is missing. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.");
+      setIsLoaded(true);
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from(TABLE_NAME)
+        .select("*")
+        .eq("id", 1)
+        .maybeSingle();
+
+      if (error && error.code !== "PGRST116") {
+        throw error;
+      }
+
+      if (cancelled) return;
+
+      if (data) {
+        setEmployees(Array.isArray(data.employees) ? data.employees : []);
+        setTrainings(Array.isArray(data.trainings) ? data.trainings : []);
+        setAssignments(Array.isArray(data.assignments) ? data.assignments : []);
+        setQuizResults(Array.isArray(data.quiz_results) ? data.quiz_results : []);
+        setStorageStatus("Connected to Supabase cloud storage.");
+      } else {
+        setEmployees([]);
+        setTrainings([]);
+        setAssignments([]);
+        setQuizResults([]);
+        setStorageStatus("No cloud data found yet.");
+      }
+    } catch (error) {
+      console.error(error);
+      if (!cancelled) {
+        setStorageStatus(`Storage load failed. ${error?.message || ""}`);
+        setEmployees([]);
+        setTrainings([]);
+        setAssignments([]);
+        setQuizResults([]);
+      }
+    } finally {
+      if (!cancelled) setIsLoaded(true);
+    }
   };
 
+  loadCloudState();
+
+  return () => {
+    cancelled = true;
+  };
+}, []);
+useEffect(() => {
+  if (!isLoaded) return;
+
+  if (
+    employees.length === 0 &&
+    trainings.length === 0 &&
+    assignments.length === 0 &&
+    quizResults.length === 0
+  ) return;
+
+  const appState = { employees, trainings, assignments, quizResults };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
 
   if (!supabase) return;
 
   const timer = setTimeout(async () => {
     try {
-      const { error } = await supabase.from("lms_state").upsert({
+      const { error } = await supabase.from(TABLE_NAME).upsert({
         id: 1,
         employees,
         trainings,
@@ -316,16 +375,15 @@ export default function App() {
         quiz_results: quizResults,
         updated_at: new Date().toISOString(),
       });
-
       if (error) throw error;
-      console.log("Synced to Supabase");
+      console.log("Data synced to Supabase");
     } catch (error) {
       console.error("Supabase sync failed:", error);
     }
   }, 400);
 
   return () => clearTimeout(timer);
-}, [employees, trainings, assignments, quizResults]);
+}, [isLoaded, employees, trainings, assignments, quizResults]);
 
   const currentEmployee =
     session?.role === "employee" ? employees.find((e) => e.id === session.userId) : null;
