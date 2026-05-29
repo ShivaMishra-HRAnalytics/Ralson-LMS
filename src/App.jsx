@@ -826,9 +826,10 @@ export default function App() {
                         </td>
                         <td style={styles.td}>{item.playCount}</td>
                         <td style={styles.td}>
-                          <span style={{ ...styles.statusPill, background: item.completed ? "#dcfce7", color: item.completed ? "#16a34a" : "#dc2626" }}>
-                            {item.completed ? "✅ Completed" : "⏳ In Progress"}
-                          </span>
+                          
+                            <span style={{ ...styles.statusPill, background: item.completed ? "#dcfce7" : "#fee2e2", color: item.completed ? "#16a34a" : "#dc2626" }}>
+  {item.completed ? "✅ Completed" : "⏳ In Progress"}
+</span>
                         </td>
                         <td style={styles.td}>{item.lastWatched ? new Date(item.lastWatched).toLocaleString() : "-"}</td>
                       </tr>
