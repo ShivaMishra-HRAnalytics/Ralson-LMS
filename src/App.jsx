@@ -132,7 +132,7 @@ function YouTubePlayer({ videoId, assignmentId, employeeId, trainingId, employee
       const a = analyticsRef.current;
       const now = new Date().toISOString();
       const record = {
-        id: Number(`${employeeId}${trainingId}`),
+        id: Date.now(), 
         employee_id: employeeId,
         training_id: trainingId,
         employee_name: employeeName,
