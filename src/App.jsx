@@ -1,8 +1,8 @@
 import { supabase } from "./supabaseClient";
 import { useEffect, useMemo, useState } from "react";
 
-const ADMIN_EMAIL = "admin@company.com";
-const ADMIN_PASSWORD = "admin123";
+const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL;
+const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD;
 
 const CATEGORIES = ["Onboarding", "Soft Skills", "Sales", "Technical", "HR Policies"];
 
@@ -985,8 +985,34 @@ export default function App() {
             <input style={styles.input} type="text" value={trainingForm.materialName} onChange={(e) => setTrainingForm((prev) => ({ ...prev, materialName: e.target.value }))} placeholder="File name or title" />
             <label style={styles.label}>Material Link</label>
             <input style={styles.input} type="text" value={trainingForm.materialLink} onChange={(e) => setTrainingForm((prev) => ({ ...prev, materialLink: e.target.value }))} placeholder="https://..." />
-            <label style={styles.label}>Upload File Name Only (safe)</label>
-            <input style={styles.input} type="file" accept=".pdf,.ppt,.pptx,video/*" onChange={(e) => { const file = e.target.files?.[0]; if (!file) return; setTrainingForm((prev) => ({ ...prev, materialName: file.name, materialLink: "" })); alert("File name saved. Add a public link for opening the file."); }} />
+            <label style={styles.label}>Upload File (PDF / PPT / Video)</label>
+<input
+  style={styles.input}
+  type="file"
+  accept=".pdf,.ppt,.pptx,video/*"
+  onChange={async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    alert("Uploading... please wait.");
+    const fileName = `${Date.now()}-${file.name}`;
+    const { data, error } = await supabase.storage
+      .from("training-materials")
+      .upload(fileName, file);
+    if (error) {
+      alert("Upload failed: " + error.message);
+      return;
+    }
+    const { data: urlData } = supabase.storage
+      .from("training-materials")
+      .getPublicUrl(fileName);
+    setTrainingForm((prev) => ({
+      ...prev,
+      materialName: file.name,
+      materialLink: urlData.publicUrl,
+    }));
+    alert("File uploaded! Link saved automatically.");
+  }}
+/>
             <label style={styles.label}>Mandatory</label>
             <select style={styles.input} value={trainingForm.mandatory} onChange={(e) => setTrainingForm((prev) => ({ ...prev, mandatory: e.target.value }))}>
               <option value="Yes">Yes</option>
