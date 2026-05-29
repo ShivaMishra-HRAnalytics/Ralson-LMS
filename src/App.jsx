@@ -149,7 +149,12 @@ function YouTubePlayer({ videoId, assignmentId, employeeId, trainingId, employee
     }, 1000);
   };
 
-  if (!videoId) return <div style={styles.noVideo}>No YouTube link added for this training.</div>;
+  if (!videoId) return (
+  <div style={styles.noVideo}>
+    ⚠️ No YouTube link added for this training. Admin se YouTube link add karwao.
+    {material_link && <p style={{fontSize:"12px", marginTop:"8px"}}>Current link: {material_link}</p>}
+  </div>
+);
 
   return (
     <div style={styles.playerWrap}>
@@ -466,7 +471,7 @@ export default function App() {
             <label style={styles.label}>Password</label>
             <input style={styles.input} type="password" value={loginForm.password} onChange={(e) => setLoginForm((prev) => ({ ...prev, password: e.target.value }))} placeholder="Enter password" onKeyDown={(e) => e.key === "Enter" && handleLogin()} />
             <button style={styles.loginButton} onClick={handleLogin}>Sign In</button>
-            <p style={styles.loginHint}>Admin: {ADMIN_EMAIL}</p>
+            <p style={styles.loginHint}>Admin: {ADMIN_EMAIL} | Pass: {ADMIN_PASSWORD}</p>
           </div>
         </div>
       </div>
