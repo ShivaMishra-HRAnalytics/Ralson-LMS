@@ -72,3 +72,43 @@ This transforms training from activity-based to **outcome-based and data-driven*
 ---
 
 ## 🗄️ Database Structure
+employees        — employee profiles and login credentials
+trainings        — training modules with YouTube links and quiz questions
+assignments      — maps employees to their assigned trainings
+quiz_results     — scores, pass/fail status, timestamps
+video_analytics  — watch%, skip_count, play_count, last_watched
+
+------
+
+## 👤 My Role (HR Intern)
+
+This project was built as an **HR Business Analyst / Intern**, not as a developer.
+
+My contributions:
+- Defined all HR requirements and training workflow
+- Identified what data points HR needs to make decisions
+- Tested every feature from Admin and Employee perspective
+- Diagnosed and resolved data integrity issues
+- Validated analytics output against real employee sessions
+- Escalated security vulnerability in video access management
+
+> The technical build was done in collaboration with a developer. My role was bridging the HR process gap with technology — exactly how HR tech projects work in real organisations.
+
+---
+
+## 🔗 Live Demo
+
+**[→ View Live at ralson-lms.vercel.app](https://ralson-lms.vercel.app)**
+
+| Role | Email | Password |
+|------|-------|----------|
+| Admin | (your admin email) | (your admin password) |
+
+---
+
+## 📬 Connect
+
+**Shiva Mishra** — HR Analytics & HR Technology  
+TISS Mumbai | LSP Course | HR Intern @ Ralson India Ltd.
+
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-0A66C2?style=flat&logo=linkedin)]((https://www.linkedin.com/in/shiva-mishraa))
