@@ -6,7 +6,7 @@
 ![MySQL](https://img.shields.io/badge/Database-MySQL-4479A1?style=for-the-badge&logo=mysql&logoColor=white)
 ![JavaScript](https://img.shields.io/badge/Frontend-HTML%20%7C%20CSS%20%7C%20JS-F7DF1E?style=for-the-badge&logo=javascript&logoColor=black)
 ![Apache](https://img.shields.io/badge/Server-Apache%20%7C%20XAMPP-D22128?style=for-the-badge&logo=apache&logoColor=white)
-![Live](https://img.shields.io/badge/Live-ralsonlms.infinityfreeapp.com-22C55E?style=for-the-badge)
+![Live](https://ralsonlms.infinityfreeapp.com/))
 
 **A full-stack enterprise HR-Tech system — designed, built, and deployed from scratch.**
 
