@@ -351,7 +351,7 @@ Specialisation: HR Analytics & People Technology
 
 This project was independently built during my internship at Ralson India Limited. I owned the complete lifecycle — from requirement gathering with HR management, to database design, backend development, frontend design, and live deployment.
 
-📫 [LinkedIn](#) · 📊 [Attrition Analysis Project](https://github.com/ShivaMishra-HRAnalytics/Ralson.India.Limited-Attrition-Analysis-2026) · 🌐 [Live LMS](https://ralsonlms.infinityfreeapp.com)
+📫 (https://www.linkedin.com/in/shiva-mishraa)](#) · 📊 [Attrition Analysis Project](https://github.com/ShivaMishra-HRAnalytics/Ralson.India.Limited-Attrition-Analysis-2026) · 🌐 [Live LMS](https://ralsonlms.infinityfreeapp.com)
 
 ---
 
